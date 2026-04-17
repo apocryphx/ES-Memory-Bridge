@@ -10,8 +10,8 @@
 		15B0787B2F91D67F00C19CBA /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = /usr/share/man/man1/;
-			dstSubfolderSpec = 0;
+			dstPath = "";
+			dstSubfolderSpec = 16;
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 1;
@@ -19,6 +19,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		150EAAC42F92839500260908 /* icon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = icon.png; sourceTree = "<group>"; };
 		15B0787D2F91D67F00C19CBA /* ES-Memory-Bridge */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "ES-Memory-Bridge"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -44,6 +45,7 @@
 		15B078742F91D67F00C19CBA = {
 			isa = PBXGroup;
 			children = (
+				150EAAC42F92839500260908 /* icon.png */,
 				15B0787F2F91D67F00C19CBA /* ES-Memory-Bridge */,
 				15B0787E2F91D67F00C19CBA /* Products */,
 			);
@@ -125,7 +127,7 @@
 			inputPaths = (
 				"$(BUILT_PRODUCTS_DIR)/$(PRODUCT_NAME)",
 				"$(SRCROOT)/bundle/manifest.json",
-				"$(SRCROOT)/bundle/icon.png",
+				"$(SRCROOT)/icon.png",
 			);
 			name = "Package MCPB";
 			outputPaths = (
@@ -133,7 +135,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/zsh;
-			shellScript = "# Copy built binary into bundle\nmkdir -p \"${SRCROOT}/bundle/server\"\ncp \"${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}\" \"${SRCROOT}/bundle/server/${PRODUCT_NAME}\"\n\n# Re-sign for distribution (codesign is stripped by cp in some contexts)\ncodesign --force --sign - -o runtime \"${SRCROOT}/bundle/server/${PRODUCT_NAME}\"\n\n# Pack MCPB\nexport PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\"\nnpx @anthropic-ai/mcpb pack \"${SRCROOT}/bundle/\" \"${SRCROOT}/ES-Memory-Bridge.mcpb\"\n";
+			shellScript = "# Copy icon.png from project root (Xcode-managed source of truth) into bundle/\ncp \"${SRCROOT}/icon.png\" \"${SRCROOT}/bundle/icon.png\"\n\n# Copy built binary into bundle\nmkdir -p \"${SRCROOT}/bundle/server\"\ncp \"${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}\" \"${SRCROOT}/bundle/server/${PRODUCT_NAME}\"\n\n# Re-sign for distribution (codesign is stripped by cp in some contexts)\ncodesign --force --sign - -o runtime \"${SRCROOT}/bundle/server/${PRODUCT_NAME}\"\n\n# Pack MCPB\nexport PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\"\nnpx @anthropic-ai/mcpb pack \"${SRCROOT}/bundle/\" \"${SRCROOT}/ES-Memory-Bridge.mcpb\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

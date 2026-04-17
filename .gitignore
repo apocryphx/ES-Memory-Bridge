@@ -14,3 +14,6 @@ DerivedData/
 
 # Bundle binary (rebuilt from source)
 bundle/server/ES-Memory-Bridge
+
+# Bundle icon (copied from project-root icon.png by the Package MCPB build phase)
+bundle/icon.png
