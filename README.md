@@ -44,15 +44,33 @@ The build's "Package MCPB" run-script phase produces `ES-Memory-Bridge.mcpb` at 
 ## How it works
 
 1. Claude Desktop launches the bridge from the unpacked `.mcpb`.
-2. The bridge reads its own `CFBundleIdentifier` from the embedded Info.plist (`com.elarity.es-memory-mcp` — same as the host app).
-3. From that, it derives the host's sandbox-container path and reads `server.plist`:
+2. The bridge reads `server.plist` from the host's sandbox container:
    ```
    ~/Library/Containers/com.elarity.es-memory-mcp/Data/Library/Application Support/ES-Memory/server.plist
    ```
-4. `server.plist` contains the URL of the locally-running HTTP server (e.g. `http://localhost:5000/`).
-5. The bridge forwards each JSON-RPC line from stdin to that URL via POST and writes the response back to stdout.
+   The host's bundle ID is a compile-time constant in [main.m](ES-Memory-Bridge/main.m) — the bridge has its own distinct ID (`com.elarity.es-memory-bridge`).
+3. `server.plist` contains the full MCP endpoint URL (e.g. `http://localhost:5000/mcp`) and the host's version string.
+4. The bridge forwards each JSON-RPC line from stdin to that URL via POST and writes the response back to stdout.
 
-If `server.plist` is missing or the server isn't running, the bridge writes a diagnostic to stderr and exits non-zero.
+### When ES Memory isn't running
+
+The bridge doesn't fail silently. Two safety nets:
+
+- **Startup polling** — if `server.plist` is missing on launch, the bridge polls every 500ms for up to 5 seconds. Handles the common "Claude Desktop launched before ES Memory finished starting" race.
+- **Degraded mode** — if polling still fails, the bridge stays alive and responds to `initialize` and `tools/list` with a stub containing a single `es_memory_setup` tool whose description tells the user to launch the ES Memory app. `tools/call` returns a human-readable error in the content. The bridge re-attempts discovery on every incoming request, so it auto-recovers once the host comes up.
+
+This means the user sees a clear "launch ES Memory.app from /Applications" message inside Claude rather than a silent connection failure.
+
+## Requires
+
+The bridge uses a contract written by the host into `server.plist`:
+
+| Key | Value |
+|---|---|
+| `url` | Full MCP endpoint URL including `/mcp` path |
+| `version` | Host's `CFBundleShortVersionString` (logged on connect) |
+
+The host also deletes `server.plist` on terminate so the bridge sees a clean "not running" state rather than a stale URL. Requires **ES Memory v1.0.4 or later**.
 
 ## Project structure
 
@@ -60,7 +78,7 @@ If `server.plist` is missing or the server isn't running, the bridge writes a di
 ES-Memory-Bridge/
 ├── ES-Memory-Bridge/
 │   ├── main.m                     # Bridge implementation
-│   └── Info.plist                 # CFBundleIdentifier = com.elarity.es-memory-mcp
+│   └── Info.plist                 # CFBundleIdentifier = com.elarity.es-memory-bridge
 ├── ES-Memory-Bridge.xcodeproj/    # Xcode project
 ├── bundle/
 │   ├── manifest.json              # MCPB manifest (v0.3)
