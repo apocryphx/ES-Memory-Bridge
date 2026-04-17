@@ -6,90 +6,28 @@
 //
 //  Claude Desktop launches this CLT (packaged inside an .mcpb bundle) as a
 //  subprocess. It reads JSON-RPC messages from stdin, forwards each to the
-//  ES Memory app's locally-running HTTP server, and writes the response to
-//  stdout.
+//  ES Memory app's locally-running HTTP server, and writes the response
+//  back to stdout.
 //
-//  Discovery: reads server.plist from the host's sandbox container at
-//      ~/Library/Containers/<HOST_BUNDLE_ID>/Data/Library/Application Support/ES-Memory/server.plist
-//  The plist contains the full MCP endpoint URL and the host's version.
+//  The bridge reads zero files. The host is expected to listen at a fixed
+//  URL (localhost:59123/mcp) — an exotic, IANA-dynamic-range port chosen to
+//  avoid conflicts with common local services (AirPlay sits on 5000, etc.).
 //
-//  If the host isn't running on startup, the bridge polls for ~5s, then enters
-//  a degraded mode that responds to MCP requests locally with a setup-help
-//  message instead of failing silently. It re-attempts discovery on every
-//  request, so it auto-recovers when the host comes up.
+//  If the host isn't reachable, the bridge responds locally to MCP requests
+//  with a setup-help message so Claude can surface a clear error in the
+//  conversation. It auto-recovers on the next successful forward.
+//
+//  No file IO = no TCC prompts, ever. That's the whole point of this
+//  revision.
 //
 
 #import <Foundation/Foundation.h>
 #include <signal.h>
 
-// The host app's bundle ID. The bridge reads server.plist from the host's
-// sandbox container at this ID. Change this and the bridge points at a
-// different host app.
-#define HOST_BUNDLE_ID @"com.elarity.es-memory-mcp"
+static NSString *const kServerURL = @"http://localhost:59123/mcp";
 
 static NSURL *gServerURL = nil;
-static NSString *gServerVersion = nil;
-
-#pragma mark - Server Discovery
-
-/// Read server.plist from the host's sandbox container.
-/// quiet=YES suppresses stderr output (used during polling so we don't spam logs).
-static NSURL *DiscoverServerURL(BOOL quiet) {
-    NSString *plistPath = [NSString stringWithFormat:
-        @"%@/Library/Containers/%@/Data/Library/Application Support/ES-Memory/server.plist",
-        NSHomeDirectory(), HOST_BUNDLE_ID];
-
-    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:plistPath];
-    if (!info) {
-        if (!quiet) {
-            fprintf(stderr, "[es-bridge] server.plist not found at %s\n", plistPath.UTF8String);
-            fprintf(stderr, "[es-bridge] Is ES Memory MCP running?\n");
-        }
-        return nil;
-    }
-
-    NSString *urlString = info[@"url"];
-    if (urlString.length == 0) {
-        if (!quiet) fprintf(stderr, "[es-bridge] server.plist missing 'url' key\n");
-        return nil;
-    }
-
-    NSURL *url = [NSURL URLWithString:urlString];
-    if (!url) {
-        if (!quiet) fprintf(stderr, "[es-bridge] invalid URL in server.plist: %s\n",
-                            urlString.UTF8String);
-        return nil;
-    }
-
-    NSString *version = info[@"version"];
-    if (version.length > 0) gServerVersion = version;
-
-    if (!quiet) {
-        fprintf(stderr, "[es-bridge] using %s\n", plistPath.UTF8String);
-        if (gServerVersion) {
-            fprintf(stderr, "[es-bridge] ES Memory v%s\n", gServerVersion.UTF8String);
-        }
-    }
-    return url;
-}
-
-/// Try discovery once verbosely; if that misses, poll every 500ms for up to 5s
-/// (quiet, so logs aren't spammed). On a polled hit, emit the verbose diagnostic.
-static NSURL *DiscoverServerURLWithPolling(void) {
-    NSURL *url = DiscoverServerURL(NO);
-    if (url) return url;
-    fprintf(stderr, "[es-bridge] waiting up to 5s for ES Memory...\n");
-    for (int i = 0; i < 10; i++) {
-        [NSThread sleepForTimeInterval:0.5];
-        url = DiscoverServerURL(YES);
-        if (url) {
-            (void)DiscoverServerURL(NO); // re-emit the path + version diagnostic
-            fprintf(stderr, "[es-bridge] connected after %dms\n", (i + 1) * 500);
-            return url;
-        }
-    }
-    return nil;
-}
+static BOOL  gHostReachable = YES; // optimism; flipped on first forward failure
 
 #pragma mark - HTTP Forwarding
 
@@ -201,14 +139,9 @@ int main(int argc, const char *argv[]) {
     @autoreleasepool {
         signal(SIGPIPE, SIG_IGN);
 
-        gServerURL = DiscoverServerURLWithPolling();
-        if (gServerURL) {
-            fprintf(stderr, "[es-bridge] connected to %s\n",
-                    gServerURL.absoluteString.UTF8String);
-        } else {
-            fprintf(stderr, "[es-bridge] entering degraded mode — will respond locally "
-                            "with setup help; auto-recovers if ES Memory starts.\n");
-        }
+        gServerURL = [NSURL URLWithString:kServerURL];
+        fprintf(stderr, "[es-bridge] forwarding to %s (static URL, no discovery)\n",
+                kServerURL.UTF8String);
 
         NSFileHandle *stdinHandle  = [NSFileHandle fileHandleWithStandardInput];
         NSFileHandle *stdoutHandle = [NSFileHandle fileHandleWithStandardOutput];
@@ -236,44 +169,29 @@ int main(int argc, const char *argv[]) {
                     [NSCharacterSet whitespaceCharacterSet]];
                 if (line.length == 0) continue;
 
-                // Lazy retry — the host may have just launched.
-                if (!gServerURL) {
-                    gServerURL = DiscoverServerURL(YES);
-                    if (gServerURL) {
-                        fprintf(stderr, "[es-bridge] recovered: connected to %s\n",
-                                gServerURL.absoluteString.UTF8String);
-                    }
-                }
-
+                NSError *error = nil;
+                NSString *response = ForwardRequest(line, &error);
                 NSString *output = nil;
 
-                if (gServerURL) {
-                    NSError *error = nil;
-                    NSString *response = ForwardRequest(line, &error);
-                    if (response) {
-                        output = response;
-                    } else if (error) {
-                        // Connection failed — host probably went down. Drop the
-                        // cached URL so the next request re-attempts discovery,
-                        // and respond from the degraded handler for this one.
-                        fprintf(stderr, "[es-bridge] forward error: %s — dropping cached URL\n",
-                                error.localizedDescription.UTF8String);
-                        gServerURL = nil;
-                        gServerVersion = nil;
-                        NSDictionary *msg = [NSJSONSerialization JSONObjectWithData:lineData
-                                                                            options:0 error:nil];
-                        if ([msg isKindOfClass:[NSDictionary class]]) {
-                            output = DegradedResponseForRequest(msg);
-                        }
+                if (response) {
+                    if (!gHostReachable) {
+                        fprintf(stderr, "[es-bridge] host recovered — resuming forwarding\n");
+                        gHostReachable = YES;
                     }
-                    // response nil + no error → 202 ack, no output needed.
-                } else {
+                    output = response;
+                } else if (error) {
+                    if (gHostReachable) {
+                        fprintf(stderr, "[es-bridge] host unreachable: %s — degraded mode\n",
+                                error.localizedDescription.UTF8String);
+                        gHostReachable = NO;
+                    }
                     NSDictionary *msg = [NSJSONSerialization JSONObjectWithData:lineData
                                                                         options:0 error:nil];
                     if ([msg isKindOfClass:[NSDictionary class]]) {
                         output = DegradedResponseForRequest(msg);
                     }
                 }
+                // response nil + no error → 202 ack from host, no output needed.
 
                 if (output) {
                     [stdoutHandle writeData:[[output stringByAppendingString:@"\n"]

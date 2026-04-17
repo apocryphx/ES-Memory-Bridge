@@ -18,27 +18,6 @@
 		};
 /* End PBXCopyFilesBuildPhase section */
 
-/* Begin PBXShellScriptBuildPhase section */
-		15B0789A2F91D80000C19CBA /* Package MCPB */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputPaths = (
-				"$(BUILT_PRODUCTS_DIR)/$(PRODUCT_NAME)",
-				"$(SRCROOT)/bundle/manifest.json",
-				"$(SRCROOT)/bundle/icon.png",
-			);
-			name = "Package MCPB";
-			outputPaths = (
-				"$(SRCROOT)/ES-Memory-Bridge.mcpb",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/zsh;
-			shellScript = "# Copy built binary into bundle\nmkdir -p \"${SRCROOT}/bundle/server\"\ncp \"${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}\" \"${SRCROOT}/bundle/server/${PRODUCT_NAME}\"\n\n# Re-sign for distribution (codesign is stripped by cp in some contexts)\ncodesign --force --sign - -o runtime \"${SRCROOT}/bundle/server/${PRODUCT_NAME}\"\n\n# Pack MCPB\nexport PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\"\nnpx @anthropic-ai/mcpb pack \"${SRCROOT}/bundle/\" \"${SRCROOT}/ES-Memory-Bridge.mcpb\"\n";
-		};
-/* End PBXShellScriptBuildPhase section */
-
 /* Begin PBXFileReference section */
 		15B0787D2F91D67F00C19CBA /* ES-Memory-Bridge */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "ES-Memory-Bridge"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -136,6 +115,27 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		15B0789A2F91D80000C19CBA /* Package MCPB */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/$(PRODUCT_NAME)",
+				"$(SRCROOT)/bundle/manifest.json",
+				"$(SRCROOT)/bundle/icon.png",
+			);
+			name = "Package MCPB";
+			outputPaths = (
+				"$(SRCROOT)/ES-Memory-Bridge.mcpb",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/zsh;
+			shellScript = "# Copy built binary into bundle\nmkdir -p \"${SRCROOT}/bundle/server\"\ncp \"${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}\" \"${SRCROOT}/bundle/server/${PRODUCT_NAME}\"\n\n# Re-sign for distribution (codesign is stripped by cp in some contexts)\ncodesign --force --sign - -o runtime \"${SRCROOT}/bundle/server/${PRODUCT_NAME}\"\n\n# Pack MCPB\nexport PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\"\nnpx @anthropic-ai/mcpb pack \"${SRCROOT}/bundle/\" \"${SRCROOT}/ES-Memory-Bridge.mcpb\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		15B078792F91D67F00C19CBA /* Sources */ = {
@@ -271,9 +271,10 @@
 				CODE_SIGN_STYLE = Automatic;
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
 				DEVELOPMENT_TEAM = 2PYWYF3C55;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = "ES-Memory-Bridge/Info.plist";
-				PRODUCT_BUNDLE_IDENTIFIER = "com.elarity.es-memory-bridge";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.elarity.es-memory-mcp";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Debug;
@@ -284,9 +285,10 @@
 				CODE_SIGN_STYLE = Automatic;
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
 				DEVELOPMENT_TEAM = 2PYWYF3C55;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = "ES-Memory-Bridge/Info.plist";
-				PRODUCT_BUNDLE_IDENTIFIER = "com.elarity.es-memory-bridge";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.elarity.es-memory-mcp";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Release;

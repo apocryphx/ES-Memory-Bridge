@@ -44,33 +44,31 @@ The build's "Package MCPB" run-script phase produces `ES-Memory-Bridge.mcpb` at 
 ## How it works
 
 1. Claude Desktop launches the bridge from the unpacked `.mcpb`.
-2. The bridge reads `server.plist` from the host's sandbox container:
+2. The bridge forwards each JSON-RPC line from stdin to a fixed URL:
    ```
-   ~/Library/Containers/com.elarity.es-memory-mcp/Data/Library/Application Support/ES-Memory/server.plist
+   http://localhost:59123/mcp
    ```
-   The host's bundle ID is a compile-time constant in [main.m](ES-Memory-Bridge/main.m) — the bridge has its own distinct ID (`com.elarity.es-memory-bridge`).
-3. `server.plist` contains the full MCP endpoint URL (e.g. `http://localhost:5000/mcp`) and the host's version string.
-4. The bridge forwards each JSON-RPC line from stdin to that URL via POST and writes the response back to stdout.
+   It writes the HTTP response back to stdout. That's the whole hot path.
+
+The bridge reads **zero files** — no config, no discovery, no shared state with the host. No file IO means no macOS TCC prompts, ever.
+
+### The port choice
+
+59123 is deliberately exotic: in the IANA dynamic/private range (49152-65535), not associated with any common service. Port 5000 (the common default for local HTTP dev servers) is used by macOS AirPlay Receiver, which was the motivation for moving off it.
 
 ### When ES Memory isn't running
 
-The bridge doesn't fail silently. Two safety nets:
+The bridge doesn't fail silently. If the HTTP forward fails (host not running, or went down mid-session), the bridge enters degraded mode:
 
-- **Startup polling** — if `server.plist` is missing on launch, the bridge polls every 500ms for up to 5 seconds. Handles the common "Claude Desktop launched before ES Memory finished starting" race.
-- **Degraded mode** — if polling still fails, the bridge stays alive and responds to `initialize` and `tools/list` with a stub containing a single `es_memory_setup` tool whose description tells the user to launch the ES Memory app. `tools/call` returns a human-readable error in the content. The bridge re-attempts discovery on every incoming request, so it auto-recovers once the host comes up.
+- `initialize` returns a stub with `serverInfo.name: "ES Memory (offline)"` and an `instructions` field telling the user to launch the app.
+- `tools/list` returns one tool: `es_memory_setup`, whose description also tells the user to launch the app.
+- `tools/call` returns `isError: true` with human-readable setup text.
 
-This means the user sees a clear "launch ES Memory.app from /Applications" message inside Claude rather than a silent connection failure.
+On every subsequent request the bridge attempts the forward again, so the moment the host comes up the bridge auto-recovers and resumes normal forwarding. The user sees a clear, actionable message inside Claude instead of a silent connection failure.
 
 ## Requires
 
-The bridge uses a contract written by the host into `server.plist`:
-
-| Key | Value |
-|---|---|
-| `url` | Full MCP endpoint URL including `/mcp` path |
-| `version` | Host's `CFBundleShortVersionString` (logged on connect) |
-
-The host also deletes `server.plist` on terminate so the bridge sees a clean "not running" state rather than a stale URL. Requires **ES Memory v1.0.4 or later**.
+**ES Memory v1.0.5 or later**, configured to bind to port 59123. (Earlier versions used dynamic port selection with discovery via `server.plist`; v1.0.5 binds to a fixed port and needs no discovery.)
 
 ## Project structure
 
