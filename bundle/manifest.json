@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "es-memory-bridge",
   "display_name": "ES Memory",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Stdio bridge to the ES Memory MCP server. Provides Claude with persistent memory: store, retrieve, organize, and curate memories across sessions. Requires the ES Memory app to be running locally.",
   "author": {
     "name": "Kolja Wawrowsky"
@@ -16,6 +16,7 @@
       "args": []
     }
   },
+  "tools_generated": true,
   "keywords": ["memory", "persistence", "knowledge"],
   "license": "MIT",
   "compatibility": {
