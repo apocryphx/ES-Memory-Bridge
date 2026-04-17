@@ -273,7 +273,7 @@
 				DEVELOPMENT_TEAM = 2PYWYF3C55;
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = "ES-Memory-Bridge/Info.plist";
-				PRODUCT_BUNDLE_IDENTIFIER = "com.elarity.es-memory-mcp";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.elarity.es-memory-bridge";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Debug;
@@ -286,7 +286,7 @@
 				DEVELOPMENT_TEAM = 2PYWYF3C55;
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = "ES-Memory-Bridge/Info.plist";
-				PRODUCT_BUNDLE_IDENTIFIER = "com.elarity.es-memory-mcp";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.elarity.es-memory-bridge";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Release;

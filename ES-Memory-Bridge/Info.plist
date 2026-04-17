@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key>
-	<string>com.elarity.es-memory-mcp</string>
+	<string>com.elarity.es-memory-bridge</string>
 	<key>CFBundleName</key>
 	<string>ES Memory Bridge</string>
 	<key>CFBundleVersion</key>
