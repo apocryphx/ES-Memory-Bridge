@@ -1,6 +1,6 @@
 # ES Memory Bridge
 
-A native macOS MCP bridge that connects Claude Desktop to the **ES Memory** app — a local memory archive designed by and for Claude. The bridge is a thin stdio↔HTTP shim: Claude Desktop launches it as a subprocess, it discovers the locally-running ES Memory server, and forwards JSON-RPC messages over HTTP.
+A native macOS MCP bridge that connects Claude Desktop to the **ES Memory** app — a local memory archive designed with and for Claude. The bridge is a thin stdio↔HTTP shim: Claude Desktop launches it as a subprocess, it discovers the locally-running ES Memory server, and forwards JSON-RPC messages over HTTP.
 
 ## What this is
 
