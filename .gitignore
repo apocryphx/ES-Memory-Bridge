@@ -9,9 +9,6 @@ DerivedData/
 *.xcodeproj/project.xcworkspace/xcuserdata/
 *.xcodeproj/project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
 
-# MCPB output
-*.mcpb
-
 # Bundle binary (rebuilt from source)
 bundle/server/ES-Memory-Bridge
 
