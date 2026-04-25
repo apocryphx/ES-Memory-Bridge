@@ -61,8 +61,8 @@ The bridge reads **zero files** — no config, no discovery, no shared state wit
 The bridge doesn't fail silently. If the HTTP forward fails (host not running, or went down mid-session), the bridge enters degraded mode:
 
 - `initialize` returns a stub with `serverInfo.name: "ES Memory (offline)"` and an `instructions` field telling the user to launch the app.
-- `tools/list` returns one tool: `es_memory_setup`, whose description also tells the user to launch the app.
-- `tools/call` returns `isError: true` with human-readable setup text.
+- `tools/list` returns the **full 21-tool schema** — Claude sees every tool name and description even while the app is offline. The schema is embedded in the bridge at build time; when the server is running, `tools/list` is forwarded and the live schema is authoritative.
+- `tools/call` returns `isError: true` with a tool-specific message: _"ES Memory is not running. Launch ES Memory.app from /Applications to use 'memory_search', then ask Claude to retry."_
 
 On every subsequent request the bridge attempts the forward again, so the moment the host comes up the bridge auto-recovers and resumes normal forwarding. The user sees a clear, actionable message inside Claude instead of a silent connection failure.
 
