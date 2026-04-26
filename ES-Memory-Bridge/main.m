@@ -488,7 +488,11 @@ static NSArray *StaticToolsList(void) {
                 @"properties": @{
                     @"mode":    @{ @"type": @"string", @"description": @"list, rename, update, merge" },
                     @"kind":    @{ @"type": @"string", @"description": @"Filter by kind (list mode)." },
-                    @"name":    @{ @"type": @"string", @"description": @"Current tag name (rename, update)." },
+                    @"name":    @{ @"type": @"string", @"description": @"In list mode: case-insensitive substring filter "
+                                                                        "(e.g. \"Hu\" matches Humboldt, Hundertwasser). "
+                                                                        "In rename/update: exact tag name to modify." },
+                    @"limit":   @{ @"type": @"integer", @"description": @"Maximum tags to return (list mode). Default 50." },
+                    @"offset":  @{ @"type": @"integer", @"description": @"Skip this many tags before applying limit (list mode). Default 0." },
                     @"newName": @{ @"type": @"string", @"description": @"New name (rename)." },
                     @"newKind": @{ @"type": @"string", @"description": @"New kind (update)." },
                     @"source":  @{ @"type": @"string", @"description": @"Merge from tag name." },
