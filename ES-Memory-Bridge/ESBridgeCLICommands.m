@@ -70,6 +70,16 @@ static NSString *BuildDiagLine(ESBridgeCLIStage *stage,
                 annotation = @"  (empty — try a different filter or re-order)";
             } else if (prior && rn == pn) {
                 annotation = @"  (re-rank only — semantic doesn't filter)";
+            } else if (prior && rn < pn) {
+                // Bridge-side title intersection: rn<pn means some prior
+                // memories didn't appear in the ranker's top-N. That IS
+                // meaningful selectivity (unlike the server-side case
+                // where rn<pn could be ambiguous — limit cap vs missing
+                // vectors). Report it.
+                double pct = (double)rn / (double)pn * 100.0;
+                if (pct < 10.0)        annotation = [NSString stringWithFormat:@"  (highly selective: %.0f%%)", pct];
+                else if (pct > 90.0)   annotation = [NSString stringWithFormat:@"  (barely narrowed: %.0f%%)", pct];
+                else                   annotation = [NSString stringWithFormat:@"  (selectivity: %.0f%%)", pct];
             }
             break;
         default:
