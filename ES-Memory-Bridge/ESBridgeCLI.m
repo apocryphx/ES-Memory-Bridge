@@ -4,7 +4,6 @@
 //
 
 #import "ESBridgeCLI.h"
-#import "ESBridgeCLICommands.h"
 
 #pragma mark - ESBridgeCLIToken
 
@@ -381,6 +380,35 @@ ESBridgeCallTool(NSString *toolName,
 
 #pragma mark - Execution
 
+// Strip "uuid" fields from any results array in the response. The bridge↔
+// server protocol carries UUIDs (for graph analysis tools, scripts, etc),
+// but Claude shouldn't see them — UUIDs are machine identity, titles are
+// reading interface. Mixing them in the same response degrades the
+// LLM-facing surface for an audience that doesn't need machine identity.
+static NSDictionary *StripUUIDsFromResponse(NSDictionary *response) {
+    if (![response isKindOfClass:NSDictionary.class]) return response;
+    NSArray *results = response[@"results"];
+    if (![results isKindOfClass:NSArray.class]) return response;
+
+    NSMutableArray *cleaned = [NSMutableArray arrayWithCapacity:results.count];
+    for (NSDictionary *row in results) {
+        if (![row isKindOfClass:NSDictionary.class]) {
+            [cleaned addObject:row];
+            continue;
+        }
+        if (row[@"uuid"]) {
+            NSMutableDictionary *copy = [row mutableCopy];
+            [copy removeObjectForKey:@"uuid"];
+            [cleaned addObject:[copy copy]];
+        } else {
+            [cleaned addObject:row];
+        }
+    }
+    NSMutableDictionary *out = [response mutableCopy];
+    out[@"results"] = cleaned;
+    return [out copy];
+}
+
 NSDictionary *
 ESBridgeCLIExecute(NSArray<ESBridgeCLIStage *> *stages) {
     if (stages.count == 0) {
@@ -390,109 +418,28 @@ ESBridgeCLIExecute(NSArray<ESBridgeCLIStage *> *stages) {
         };
     }
 
-    // Short-circuit: man as the only command.
-    ESBridgeCLIStage *first = stages.firstObject;
-    if ([first.name isEqualToString:@"man"]) {
-        if (stages.count > 1) {
-            return @{
-                @"error":   @"man_must_be_terminal",
-                @"message": @"`man` doesn't compose; run it on its own.",
-            };
-        }
-        NSString *target = first.positional.firstObject;
-        return ESBridgeCLIRunMan(target);
+    // Marshal each stage to a {name, positional, flags} dict. The server's
+    // memory_pipeline tool deserializes this and instantiates the matching
+    // ESPipelineFilter classes.
+    NSMutableArray<NSDictionary *> *stageDicts = [NSMutableArray arrayWithCapacity:stages.count];
+    for (ESBridgeCLIStage *stage in stages) {
+        NSMutableDictionary *d = [NSMutableDictionary dictionary];
+        d[@"name"] = stage.name;
+        if (stage.positional.count > 0) d[@"positional"] = stage.positional;
+        if (stage.flags.count > 0)      d[@"flags"]      = stage.flags;
+        [stageDicts addObject:d];
     }
 
-    // Pipeline state. Population flows between stages as memory dicts.
-    // `pendingTags` and `pendingDays` are accumulated by lfind stages and
-    // consumed by the next fetcher stage (w2vgrep, grep, etc). If a pipeline
-    // ends without any fetcher consuming them, we flush them as a memory_tagged
-    // or memory_recent call.
-    NSMutableArray<NSString *> *diagLines = [NSMutableArray arrayWithCapacity:stages.count];
-    NSArray<NSDictionary *> *prior = nil;
-    NSArray<NSString *> *pendingTags = nil;
-    NSNumber *pendingDays = nil;
-    BOOL anyFetcherFired = NO;
-
-    for (NSUInteger idx = 0; idx < stages.count; idx++) {
-        ESBridgeCLIStage *stage = stages[idx];
-        BOOL isFirst = (idx == 0);
-        BOOL isLast = (idx == stages.count - 1);
-
-        // Terminals: cat, wc.
-        if ([stage.name isEqualToString:@"cat"] ||
-            [stage.name isEqualToString:@"wc"]) {
-            // If lfind accumulated filters but no fetcher fired, flush now.
-            if (!anyFetcherFired && (pendingTags || pendingDays)) {
-                ESBridgeCLIStageResult flush =
-                    ESBridgeCLIFlushPendingFilters(pendingTags, pendingDays, isFirst);
-                if (flush.error) {
-                    return @{
-                        @"error":    flush.error,
-                        @"message":  flush.errorMessage ?: @"",
-                        @"pipeline": [diagLines componentsJoinedByString:@"\n"],
-                    };
-                }
-                prior = flush.population;
-                pendingTags = nil;
-                pendingDays = nil;
-                anyFetcherFired = YES;
-                // Note: flush has no diag line — the lfind stage already emitted one
-            }
-
-            ESBridgeCLIStageResult result = ESBridgeCLIRunTerminal(stage, prior, isFirst);
-            [diagLines addObject:result.diagLine];
-            NSMutableDictionary *response = [result.response mutableCopy] ?: [NSMutableDictionary dictionary];
-            response[@"pipeline"] = [diagLines componentsJoinedByString:@"\n"];
-            return response;
-        }
-
-        ESBridgeCLIStageResult result =
-            ESBridgeCLIRunPopulationStage(stage, prior, pendingTags, pendingDays, isFirst);
-        [diagLines addObject:result.diagLine];
-
-        if (result.error) {
-            return @{
-                @"error":    result.error,
-                @"message":  result.errorMessage ?: @"",
-                @"pipeline": [diagLines componentsJoinedByString:@"\n"],
-            };
-        }
-
-        // Update pending filters (lfind sets them, fetchers clear them).
-        pendingTags = result.outPendingTags;
-        pendingDays = result.outPendingDays;
-        if (!result.deferred) {
-            prior = result.population;
-            anyFetcherFired = YES;
-        }
-
-        if (isLast) {
-            // If we ended on a deferred lfind, flush it now.
-            if (!anyFetcherFired && (pendingTags || pendingDays)) {
-                ESBridgeCLIStageResult flush =
-                    ESBridgeCLIFlushPendingFilters(pendingTags, pendingDays, NO);
-                if (flush.error) {
-                    return @{
-                        @"error":    flush.error,
-                        @"message":  flush.errorMessage ?: @"",
-                        @"pipeline": [diagLines componentsJoinedByString:@"\n"],
-                    };
-                }
-                prior = flush.population;
-            }
-
-            return @{
-                @"pipeline": [diagLines componentsJoinedByString:@"\n"],
-                @"results":  prior ?: @[],
-                @"count":    @(prior.count),
-            };
-        }
+    NSError *err = nil;
+    NSDictionary *response = ESBridgeCallTool(@"memory_pipeline",
+                                              @{@"stages": stageDicts},
+                                              &err);
+    if (!response) {
+        return @{
+            @"error":   @"server_call_failed",
+            @"message": err.localizedDescription ?: @"memory_pipeline call failed",
+        };
     }
 
-    return @{
-        @"pipeline": [diagLines componentsJoinedByString:@"\n"],
-        @"results":  @[],
-        @"count":    @0,
-    };
+    return StripUUIDsFromResponse(response);
 }
