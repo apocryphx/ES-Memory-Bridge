@@ -22,6 +22,7 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "ESBridgeCLI.h"
 #include <signal.h>
 
 static NSString *const kServerURL = @"http://localhost:59123/mcp";
@@ -31,7 +32,8 @@ static BOOL  gHostReachable = YES; // optimism; flipped on first forward failure
 
 #pragma mark - HTTP Forwarding
 
-static NSString *ForwardRequest(NSString *jsonLine, NSError **outError) {
+// Non-static — called from ESBridgeCLI when handling memory_cli pipelines.
+NSString *ForwardRequest(NSString *jsonLine, NSError **outError) {
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:gServerURL];
     request.HTTPMethod = @"POST";
     request.HTTPBody = [jsonLine dataUsingEncoding:NSUTF8StringEncoding];
@@ -105,7 +107,6 @@ static NSArray *StaticToolsList(void) {
         };
         NSDictionary *authorProp  = @{ @"type": @"string", @"description": @"Disambiguation." };
         NSDictionary *titleProp   = @{ @"type": @"string", @"description": @"Memory title." };
-        NSDictionary *dateProp    = @{ @"type": @"string", @"description": @"Exact dateCreated (ISO8601)." };
 
         // Tags oneOf used by memory_store and memory_tag (accepts objects, strings, or CSV string)
         NSArray *richTagsOneOf = @[
@@ -123,17 +124,6 @@ static NSArray *StaticToolsList(void) {
             @{ @"type": @"array", @"items": @{ @"type": @"string" } },
             @{ @"type": @"string" }
         ];
-
-        NSDictionary *focusProp = @{
-            @"type": @"string",
-            @"description": @"Override temporal focus for this call only. Does not persist.",
-            @"enum": @[ @"day", @"week", @"month", @"none" ]
-        };
-
-        NSDictionary *includeSummaryProp = @{
-            @"description": @"If true, include each memory's summary in results. Default false.",
-            @"oneOf": @[ @{ @"type": @"boolean" }, @{ @"type": @"string" } ]
-        };
 
         // ── memory_store ───────────────────────────────────────────────────────
         NSDictionary *memoryStore = @{
@@ -261,125 +251,36 @@ static NSArray *StaticToolsList(void) {
             }
         };
 
-        // ── memory_search ──────────────────────────────────────────────────────
-        NSDictionary *memorySearch = @{
-            @"name": @"memory_search",
-            @"description": @"Semantic vector search. Think in concepts, not keywords. "
-                             "Start here when something feels familiar. Previous sessions left breadcrumbs. "
-                             "Not for proper nouns.",
+        // ── memory_cli ─────────────────────────────────────────────────────────
+        // The unified search surface. Subsumes the server's memory_search,
+        // memory_grep, memory_recent, memory_tagged, memory_discover. Bridge
+        // parses the pipeline expression and dispatches to those server tools
+        // internally. Try memory_cli("man") to see the command vocabulary.
+        NSDictionary *memoryCLI = @{
+            @"name": @"memory_cli",
+            @"description":
+                @"Unix-pipeline-style search surface for ES Memory. Compose retrieval "
+                 "operations with `|` exactly the way you would in a shell.\n\n"
+                 "Start with `man` to see the full command vocabulary, then `man <command>` "
+                 "for any specific command. The system documents itself.\n\n"
+                 "Quick examples:\n"
+                 "  memory_cli(\"man\")\n"
+                 "  memory_cli(\"lfind --tag 'Isolde' | head 5\")\n"
+                 "  memory_cli(\"discover --mode forgotten | w2vgrep 'continuity' | head 10\")\n"
+                 "  memory_cli(\"lfind --tag 'ES Memory' | wc\")\n\n"
+                 "If results disappoint, vary the pipeline: reorder stages, replace one "
+                 "command with another at the same position, or change a parameter and "
+                 "re-run. Be persistent. Be creative. You will find it eventually.",
             @"annotations": @{ @"readOnlyHint": @YES, @"destructiveHint": @NO },
             @"inputSchema": @{
                 @"type": @"object",
                 @"properties": @{
-                    @"query": @{ @"type": @"string", @"description": @"Natural language query." },
-                    @"limit": @{ @"description": @"Maximum number of results. Default: 10.",
-                                 @"oneOf": @[
-                                     @{ @"type": @"integer", @"minimum": @1, @"maximum": @50 },
-                                     @{ @"type": @"string" }
-                                 ] },
-                    @"focus": focusProp,
-                    @"tags":  @{ @"type": @"array",
-                                 @"description": @"Restrict ranking to memories carrying ANY of these tags "
-                                                  "(OR semantics, case-insensitive). Use this when a proper noun "
-                                                  "is load-bearing — e.g. 'review memories about Illucida' → "
-                                                  "tags:[\"Illucida\"]. Leave absent for unfiltered search.",
-                                 @"items": @{ @"type": @"string" } }
+                    @"expression": @{
+                        @"type": @"string",
+                        @"description": @"A pipeline expression. Run memory_cli(\"man\") to list commands."
+                    }
                 },
-                @"required": @[ @"query" ]
-            }
-        };
-
-        // ── memory_grep ────────────────────────────────────────────────────────
-        NSDictionary *memoryGrep = @{
-            @"name": @"memory_grep",
-            @"description": @"Line-addressed pattern search across memory text (body and/or attachments). "
-                             "Two modes: single-memory (when `title` is given — drill into one memory) and "
-                             "corpus-wide (when `title` is absent — scan every memory, optionally pre-filtered "
-                             "by `tags`). Returns matching lines with line numbers, source, memory_title, and "
-                             "surrounding context. Literal substring by default; set regex:true for ICU regex. "
-                             "Note: line 1 of a memory body is always the title.",
-            @"annotations": @{ @"readOnlyHint": @YES, @"destructiveHint": @NO },
-            @"inputSchema": @{
-                @"type": @"object",
-                @"properties": @{
-                    @"title":            @{ @"type": @"string", @"description": @"Memory title. Omit to search the entire corpus." },
-                    @"author":           authorProp,
-                    @"index":            disambigIndex,
-                    @"tags":             @{ @"type": @"array", @"items": @{ @"type": @"string" },
-                                           @"description": @"Restrict corpus search to memories carrying ANY of these tags "
-                                                            "(OR semantics, case-insensitive). Ignored when `title` is provided." },
-                    @"scope":            @{ @"type": @"string",
-                                           @"enum": @[ @"all", @"body", @"attachments" ],
-                                           @"description": @"Default all. Overridden to 'attachments' if attachment_title is set." },
-                    @"attachment_title": @{ @"type": @"string",
-                                           @"description": @"Restrict attachment search to attachments with this title. "
-                                                            "Implies scope=attachments. In corpus mode, matches across all scanned memories." },
-                    @"pattern":          @{ @"type": @"string", @"description": @"Substring or ICU regex." },
-                    @"regex":            @{ @"description": @"Treat pattern as ICU regex. Default false (literal substring).",
-                                           @"oneOf": @[ @{ @"type": @"boolean" }, @{ @"type": @"string" } ] },
-                    @"case_sensitive":   @{ @"description": @"Default false.",
-                                           @"oneOf": @[ @{ @"type": @"boolean" }, @{ @"type": @"string" } ] },
-                    @"multiline":        @{ @"description": @"`.` matches newlines and `^`/`$` match line boundaries. Default false.",
-                                           @"oneOf": @[ @{ @"type": @"boolean" }, @{ @"type": @"string" } ] },
-                    @"output_mode":      @{ @"type": @"string",
-                                           @"enum": @[ @"content", @"files_with_matches", @"count" ],
-                                           @"description": @"Default content. In corpus mode, files_with_matches is the discovery shape." },
-                    @"context_lines":    @{ @"description": @"Lines of context before/after each match. 0–10. Default 2. Only used in content mode.",
-                                           @"oneOf": @[ @{ @"type": @"integer" }, @{ @"type": @"string" } ] },
-                    @"head_limit":       @{ @"description": @"Max entries returned. Default 100, max 1000.",
-                                           @"oneOf": @[ @{ @"type": @"integer" }, @{ @"type": @"string" } ] },
-                    @"offset":           @{ @"description": @"Skip this many matches before applying head_limit. Default 0.",
-                                           @"oneOf": @[ @{ @"type": @"integer" }, @{ @"type": @"string" } ] }
-                },
-                @"required": @[ @"pattern" ]
-            }
-        };
-
-        // ── memory_recent ──────────────────────────────────────────────────────
-        NSDictionary *memoryRecent = @{
-            @"name": @"memory_recent",
-            @"description": @"Temporal retrieval. Reverse chronological.",
-            @"annotations": @{ @"readOnlyHint": @YES, @"destructiveHint": @NO },
-            @"inputSchema": @{
-                @"type": @"object",
-                @"properties": @{
-                    @"limit":           @{ @"description": @"Maximum number of results. Default: 20.",
-                                          @"oneOf": @[ @{ @"type": @"integer" }, @{ @"type": @"string" } ] },
-                    @"days":            @{ @"description": @"Limit to last N days.",
-                                          @"oneOf": @[ @{ @"type": @"integer" }, @{ @"type": @"string" } ] },
-                    @"tags":            @{ @"type": @"array",
-                                          @"description": @"Restrict to memories carrying ANY of these tags "
-                                                           "(OR semantics, case-insensitive). Use this to scope the recent "
-                                                           "timeline to a specific project or entity — e.g. tags:[\"Illucida\"] "
-                                                           "for 'what have I been working on in Illucida lately'.",
-                                          @"items": @{ @"type": @"string" } },
-                    @"include_summary": includeSummaryProp
-                }
-            }
-        };
-
-        // ── memory_discover ────────────────────────────────────────────────────
-        NSDictionary *memoryDiscover = @{
-            @"name": @"memory_discover",
-            @"description": @"the archive looking at itself. Seven modes: popular (most accessed), "
-                             "forgotten (old and unread — buried signal), lost (no tags, no links — orphans waiting for you), "
-                             "hubs (most connected — load-bearing nodes), revised (most edited — living documents), "
-                             "discussed (most commented — thoughts that provoke thinking), "
-                             "hot (active right now — where the conversation is).",
-            @"annotations": @{ @"readOnlyHint": @YES, @"destructiveHint": @NO },
-            @"inputSchema": @{
-                @"type": @"object",
-                @"properties": @{
-                    @"mode":            @{ @"type": @"string",
-                                          @"description": @"popular, forgotten, lost, hubs, revised, discussed, hot" },
-                    @"limit":           @{ @"description": @"Default: 20.",
-                                          @"oneOf": @[ @{ @"type": @"integer" }, @{ @"type": @"string" } ] },
-                    @"focus":           focusProp,
-                    @"include_summary": @{ @"description": @"If true, include each memory's summary in results — "
-                                                            "lets you skim a discover mode without N memory_read calls. Default false.",
-                                           @"oneOf": @[ @{ @"type": @"boolean" }, @{ @"type": @"string" } ] }
-                },
-                @"required": @[ @"mode" ]
+                @"required": @[ @"expression" ]
             }
         };
 
@@ -499,40 +400,6 @@ static NSArray *StaticToolsList(void) {
                     @"target":  @{ @"type": @"string", @"description": @"Merge into tag name." }
                 },
                 @"required": @[ @"mode" ]
-            }
-        };
-
-        // ── memory_tagged ──────────────────────────────────────────────────────
-        NSDictionary *memoryTagged = @{
-            @"name": @"memory_tagged",
-            @"description": @"Retrieve by entity tag. For proper nouns. Paginated — dense tags (hundreds of members) "
-                             "return a page at a time. Use `total` / `truncated` in the response to know whether more exist.",
-            @"annotations": @{ @"readOnlyHint": @YES, @"destructiveHint": @NO },
-            @"inputSchema": @{
-                @"type": @"object",
-                @"properties": @{
-                    @"tag":             @{ @"type": @"string", @"description": @"Tag name." },
-                    @"include_summary": @{ @"description": @"If true, include each memory's summary in results — "
-                                                            "lets you skim a large tag cluster without N memory_read calls. "
-                                                            "Default false (titles only).",
-                                           @"oneOf": @[ @{ @"type": @"boolean" }, @{ @"type": @"string" } ] },
-                    @"limit":           @{ @"description": @"Maximum number of results to return. Default 50, max 500.",
-                                          @"oneOf": @[
-                                              @{ @"type": @"integer", @"minimum": @1, @"maximum": @500 },
-                                              @{ @"type": @"string" }
-                                          ] },
-                    @"offset":          @{ @"description": @"Skip this many results before applying limit. Default 0. Use for pagination.",
-                                          @"oneOf": @[
-                                              @{ @"type": @"integer", @"minimum": @0 },
-                                              @{ @"type": @"string" }
-                                          ] },
-                    @"sort":            @{ @"type": @"string",
-                                          @"description": @"Ordering for deterministic pagination. Default: recent (dateModified desc). "
-                                                           "Other values: oldest (dateCreated asc), accessed (dateAccessed desc, never-accessed last), "
-                                                           "popular (accessCount desc), alphabetical (title asc).",
-                                          @"enum": @[ @"recent", @"oldest", @"accessed", @"popular", @"alphabetical" ] }
-                },
-                @"required": @[ @"tag" ]
             }
         };
 
@@ -670,10 +537,10 @@ static NSArray *StaticToolsList(void) {
         };
 
         tools = @[
+            memoryCLI,
             memoryStore, memoryRead, memoryUpdate, memoryErase,
-            memorySearch, memoryGrep, memoryRecent, memoryDiscover,
             memoryLink, memoryLinks,
-            memoryTag, memoryUntag, memoryTags, memoryTagged,
+            memoryTag, memoryUntag, memoryTags,
             memoryAddAttachment, memoryRecallAttachment, memoryRemoveAttachment,
             memoryAddComment, memoryRemoveComment,
             memoryRevisions, memoryAuthorList
@@ -763,29 +630,98 @@ int main(int argc, const char *argv[]) {
                     [NSCharacterSet whitespaceCharacterSet]];
                 if (line.length == 0) continue;
 
-                NSError *error = nil;
-                NSString *response = ForwardRequest(line, &error);
+                // Parse the JSON-RPC request once so we can dispatch on method
+                // and tool name. Bridge intercepts:
+                //   - tools/list: always served from our filtered static schema
+                //     (the bridge presents memory_cli + non-search tools as the
+                //     Claude-facing surface; the server's per-tool search surface
+                //     is hidden behind memory_cli).
+                //   - tools/call(memory_cli): handled locally by ESBridgeCLI,
+                //     which makes its own HTTP calls to the server's per-tool
+                //     surface as composition requires.
+                //   - everything else: forwarded transparently.
+                NSDictionary *msg = [NSJSONSerialization JSONObjectWithData:lineData
+                                                                    options:0 error:nil];
                 NSString *output = nil;
 
-                if (response) {
-                    if (!gHostReachable) {
-                        fprintf(stderr, "[es-bridge] host recovered — resuming forwarding\n");
-                        gHostReachable = YES;
-                    }
-                    output = response;
-                } else if (error) {
-                    if (gHostReachable) {
-                        fprintf(stderr, "[es-bridge] host unreachable: %s — degraded mode\n",
-                                error.localizedDescription.UTF8String);
-                        gHostReachable = NO;
-                    }
-                    NSDictionary *msg = [NSJSONSerialization JSONObjectWithData:lineData
-                                                                        options:0 error:nil];
-                    if ([msg isKindOfClass:[NSDictionary class]]) {
-                        output = DegradedResponseForRequest(msg);
+                if ([msg isKindOfClass:[NSDictionary class]]) {
+                    NSString *method = msg[@"method"];
+                    id rpcId = msg[@"id"];
+
+                    if ([method isEqualToString:@"tools/list"]) {
+                        // Always serve our filtered static schema, even when
+                        // the host is up. The bridge IS the curated surface.
+                        output = JSONRPCResult(rpcId, @{ @"tools": StaticToolsList() });
+                    } else if ([method isEqualToString:@"tools/call"]) {
+                        NSString *toolName = msg[@"params"][@"name"];
+                        if ([toolName isEqualToString:@"memory_cli"]) {
+                            // Handle locally. The CLI executor will make its
+                            // own HTTP calls to the server's per-tool surface.
+                            NSString *expression = msg[@"params"][@"arguments"][@"expression"];
+                            if (![expression isKindOfClass:[NSString class]] || expression.length == 0) {
+                                output = JSONRPCError(rpcId, -32602,
+                                    @"`expression` is required. Try memory_cli(\"man\") to see commands.");
+                            } else {
+                                NSError *parseErr = nil;
+                                NSArray *tokens = ESBridgeCLITokenize(expression, &parseErr);
+                                NSDictionary *result = nil;
+                                if (!tokens) {
+                                    result = @{
+                                        @"error":      @"parse_error",
+                                        @"message":    parseErr.localizedDescription ?: @"could not tokenize",
+                                        @"expression": expression,
+                                    };
+                                } else {
+                                    NSArray *stages = ESBridgeCLIParseStages(tokens, &parseErr);
+                                    if (!stages) {
+                                        result = @{
+                                            @"error":      @"parse_error",
+                                            @"message":    parseErr.localizedDescription ?: @"could not parse",
+                                            @"expression": expression,
+                                        };
+                                    } else {
+                                        result = ESBridgeCLIExecute(stages);
+                                    }
+                                }
+                                NSData *resultData = [NSJSONSerialization
+                                    dataWithJSONObject:result options:NSJSONWritingPrettyPrinted error:nil];
+                                NSString *resultText = resultData
+                                    ? [[NSString alloc] initWithData:resultData encoding:NSUTF8StringEncoding]
+                                    : @"{}";
+                                output = JSONRPCResult(rpcId, @{
+                                    @"content": @[ @{
+                                        @"type": @"text",
+                                        @"text": resultText
+                                    } ]
+                                });
+                            }
+                        }
                     }
                 }
-                // response nil + no error → 202 ack from host, no output needed.
+
+                // Fall through to forwarding for anything we didn't handle.
+                if (!output) {
+                    NSError *error = nil;
+                    NSString *response = ForwardRequest(line, &error);
+
+                    if (response) {
+                        if (!gHostReachable) {
+                            fprintf(stderr, "[es-bridge] host recovered — resuming forwarding\n");
+                            gHostReachable = YES;
+                        }
+                        output = response;
+                    } else if (error) {
+                        if (gHostReachable) {
+                            fprintf(stderr, "[es-bridge] host unreachable: %s — degraded mode\n",
+                                    error.localizedDescription.UTF8String);
+                            gHostReachable = NO;
+                        }
+                        if ([msg isKindOfClass:[NSDictionary class]]) {
+                            output = DegradedResponseForRequest(msg);
+                        }
+                    }
+                    // response nil + no error → 202 ack from host, no output.
+                }
 
                 if (output) {
                     [stdoutHandle writeData:[[output stringByAppendingString:@"\n"]
