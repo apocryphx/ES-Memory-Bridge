@@ -267,6 +267,7 @@ ESBridgeCLIParseStages(NSArray<ESBridgeCLIToken *> *tokens,
                 @"case-sensitive",
                 @"attachments",
                 @"body",
+                @"title",
             ]];
         });
 
