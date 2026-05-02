@@ -138,10 +138,15 @@ ESBridgeCLITokenize(NSString *expression, NSError * _Nullable * _Nullable errorO
 
     if (state != kDefault) {
         if (errorOut) {
+            NSString *msg = (state == kInDouble)
+                ? @"unterminated double quote"
+                // Bourne-shell single quotes are literal — they don't accept
+                // any escape, so titles containing apostrophes (e.g.
+                // "Claude's Notes") must use double quotes. Tell the user.
+                : @"unterminated single quote — single quotes don't allow embedded apostrophes; "
+                  @"for titles like Claude's Notes, use double quotes: cat \"Claude's Notes\"";
             *errorOut = [NSError errorWithDomain:@"ESBridgeCLIError" code:2
-                                         userInfo:@{NSLocalizedDescriptionKey:
-                                            (state == kInDouble ? @"unterminated double quote"
-                                                                : @"unterminated single quote")}];
+                                         userInfo:@{NSLocalizedDescriptionKey: msg}];
         }
         return nil;
     }
