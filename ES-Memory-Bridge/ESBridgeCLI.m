@@ -248,6 +248,28 @@ ESBridgeCLIParseStages(NSArray<ESBridgeCLIToken *> *tokens,
         NSMutableArray<NSString *> *positional = [NSMutableArray array];
         NSMutableDictionary<NSString *, id> *flags = [NSMutableDictionary dictionary];
 
+        // Flags that never take a value. Without this, the parser's
+        // greedy "next token is the value" lookahead would eat the
+        // positional argument when a boolean flag appears before it
+        // — e.g. `grep --attachments "pattern"` would parse as
+        // flags={attachments: "pattern"} with positional empty,
+        // and the filter would error "grep requires a pattern."
+        //
+        // Hardcoded list rather than per-filter declaration because
+        // the bridge doesn't see filter classes (those live server-
+        // side). When you add a new boolean-only flag to a filter,
+        // add its name here.
+        static NSSet<NSString *> *booleanOnlyFlags;
+        static dispatch_once_t booleanOnce;
+        dispatch_once(&booleanOnce, ^{
+            booleanOnlyFlags = [NSSet setWithArray:@[
+                @"regex",
+                @"case-sensitive",
+                @"attachments",
+                @"body",
+            ]];
+        });
+
         while (i < n && !tokens[i].isPipe) {
             ESBridgeCLIToken *tok = tokens[i];
             if (!tok.wasQuoted && [tok.value hasPrefix:@"--"]) {
@@ -261,6 +283,11 @@ ESBridgeCLIParseStages(NSArray<ESBridgeCLIToken *> *tokens,
                     return nil;
                 }
                 i++;
+                // Boolean-only flags never consume the next token.
+                if ([booleanOnlyFlags containsObject:flagName]) {
+                    flags[flagName] = @YES;
+                    continue;
+                }
                 if (i >= n || tokens[i].isPipe ||
                     (!tokens[i].wasQuoted && [tokens[i].value hasPrefix:@"--"])) {
                     flags[flagName] = @YES;
