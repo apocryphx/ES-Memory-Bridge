@@ -161,9 +161,9 @@ static NSArray *StaticToolsList(void) {
                                                     "Embedded as the vector instead of body. Describe what the memory "
                                                     "is about, what it concludes, and why it matters." },
                     @"tags":    @{ @"description":
-                                    @"Tags for proper nouns. Preferred: array of {name, kind} objects "
-                                     "(kind = person, place, or thing). Also accepted: array of name strings, "
-                                     "or a single comma-separated string of names — these default kind to 'thing'.",
+                                    @"Tags to attach. Each tag must already exist — create with memory_create_tag(name, kind) "
+                                     "first. Pass an array of {name} or {name, kind} objects, an array of name strings, or a "
+                                     "comma-separated string. Unknown names are reported as an error and the memory is not stored.",
                                    @"oneOf": richTagsOneOf }
                 },
                 @"required": @[ @"body", @"summary" ]
@@ -259,19 +259,21 @@ static NSArray *StaticToolsList(void) {
         NSDictionary *memoryCLI = @{
             @"name": @"memory_cli",
             @"description":
-                @"Unix-pipeline-style search surface for ES Memory. Compose retrieval "
-                 "operations with `|` exactly the way you would in a shell.\n\n"
+                @"Unix-pipeline-style surface for ES Memory. Compose retrieval and "
+                 "curatorial operations with `|` exactly the way you would in a shell.\n\n"
                  "Start with `man` to see the full command vocabulary, then `man <command>` "
                  "for any specific command. The system documents itself.\n\n"
                  "Quick examples:\n"
                  "  memory_cli(\"man\")\n"
                  "  memory_cli(\"lfind --tag 'Isolde' | head 5\")\n"
+                 "  memory_cli(\"lfind --tag-kind project | wc\")\n"
                  "  memory_cli(\"discover --mode forgotten | w2vgrep 'continuity' | head 10\")\n"
-                 "  memory_cli(\"lfind --tag 'ES Memory' | wc\")\n\n"
-                 "If results disappoint, vary the pipeline: reorder stages, replace one "
+                 "  memory_cli(\"grep Isolde | grep Myth | tag 'Isoldes Stories'\")  // curatorial\n\n"
+                 "Most stages read; `tag` and `untag` write (atomic per pipeline). If "
+                 "results disappoint, vary the pipeline: reorder stages, replace one "
                  "command with another at the same position, or change a parameter and "
                  "re-run. Be persistent. Be creative. You will find it eventually.",
-            @"annotations": @{ @"readOnlyHint": @YES, @"destructiveHint": @NO },
+            @"annotations": @{ @"readOnlyHint": @NO, @"destructiveHint": @NO },
             @"inputSchema": @{
                 @"type": @"object",
                 @"properties": @{
@@ -330,7 +332,9 @@ static NSArray *StaticToolsList(void) {
         // ── memory_tag ─────────────────────────────────────────────────────────
         NSDictionary *memoryTag = @{
             @"name": @"memory_tag",
-            @"description": @"Add tags without modifying body.",
+            @"description": @"Attach existing tags to a memory. Tags are deliberate, authored objects — "
+                             "they must already exist. Create with memory_create_tag(name, kind) first. "
+                             "Unknown names are reported as an error and nothing is attached.",
             @"annotations": @{
                 @"readOnlyHint": @NO,
                 @"destructiveHint": @NO,
@@ -343,9 +347,9 @@ static NSArray *StaticToolsList(void) {
                     @"author": authorProp,
                     @"index":  disambigIndex,
                     @"tags":   @{ @"description":
-                                   @"Tags to add. Preferred: array of {name, kind} objects (kind = person, place, or thing). "
-                                    "Also accepted: array of name strings, or a single comma-separated string of names — "
-                                    "these default kind to 'thing'.",
+                                   @"Names of existing tags to attach. Preferred: array of {name} objects. "
+                                    "Also accepted: array of strings, or a single comma-separated string. "
+                                    "Tags must exist via memory_create_tag.",
                                   @"oneOf": richTagsOneOf }
                 },
                 @"required": @[ @"title", @"tags" ]
@@ -378,7 +382,8 @@ static NSArray *StaticToolsList(void) {
         // ── memory_tags ────────────────────────────────────────────────────────
         NSDictionary *memoryTags = @{
             @"name": @"memory_tags",
-            @"description": @"Tag catalog management: list, rename, update kind, merge.",
+            @"description": @"Tag catalog management: list, rename, update kind, merge. "
+                             "List output includes dateCreated and dateExpired; expired tags are hidden by default.",
             @"annotations": @{
                 @"readOnlyHint": @NO,
                 @"destructiveHint": @NO,
@@ -397,9 +402,93 @@ static NSArray *StaticToolsList(void) {
                     @"newName": @{ @"type": @"string", @"description": @"New name (rename)." },
                     @"newKind": @{ @"type": @"string", @"description": @"New kind (update)." },
                     @"source":  @{ @"type": @"string", @"description": @"Merge from tag name." },
-                    @"target":  @{ @"type": @"string", @"description": @"Merge into tag name." }
+                    @"target":  @{ @"type": @"string", @"description": @"Merge into tag name." },
+                    @"includeExpired": @{ @"description": @"List mode: include tags whose dateExpired has passed. Default false.",
+                                          @"oneOf": @[ @{ @"type": @"boolean" }, @{ @"type": @"string" } ] }
                 },
                 @"required": @[ @"mode" ]
+            }
+        };
+
+        // ── memory_create_tag ──────────────────────────────────────────────────
+        NSDictionary *memoryCreateTag = @{
+            @"name": @"memory_create_tag",
+            @"description":
+                @"Create a new tag. Tags are curated, deliberate handles — there is no "
+                 "auto-creation anywhere else, so every tag's existence is an explicit "
+                 "authored gesture. `kind` is descriptive metadata. Canonical kinds: "
+                 "person, place, project, principle, subset, session, research. "
+                 "`expiresAt` is optional; absent or null = permanent. The tag is "
+                 "created with no memory associations — use memory_tag to attach a "
+                 "specific memory, or `... | tag NAME` in memory_cli to attach a "
+                 "search-result population in one atomic gesture.",
+            @"annotations": @{
+                @"readOnlyHint": @NO,
+                @"destructiveHint": @NO,
+                @"idempotentHint": @NO
+            },
+            @"inputSchema": @{
+                @"type": @"object",
+                @"properties": @{
+                    @"name": @{ @"type": @"string",
+                                @"description": @"Tag name. Case-insensitive uniqueness." },
+                    @"kind": @{ @"type": @"string",
+                                @"description": @"Descriptive kind: person, place, project, principle, subset, session, research." },
+                    @"expiresAt": @{
+                        @"description": @"ISO-8601 absolute datetime (e.g. 2026-06-01T12:00:00Z) or relative "
+                                         "offset (e.g. \"+30 days\", \"-1 hour\", \"+2h\"). Omit or null for permanent.",
+                        @"oneOf": @[ @{ @"type": @"string" }, @{ @"type": @"null" } ]
+                    }
+                },
+                @"required": @[ @"name", @"kind" ]
+            }
+        };
+
+        // ── memory_delete_tag ──────────────────────────────────────────────────
+        NSDictionary *memoryDeleteTag = @{
+            @"name": @"memory_delete_tag",
+            @"description":
+                @"Delete a tag and all its memory associations. The memories themselves are "
+                 "not touched — only the tag-to-memory edges are removed. Irreversible.",
+            @"annotations": @{
+                @"readOnlyHint": @NO,
+                @"destructiveHint": @YES,
+                @"idempotentHint": @YES
+            },
+            @"inputSchema": @{
+                @"type": @"object",
+                @"properties": @{
+                    @"name": @{ @"type": @"string",
+                                @"description": @"Tag name to delete (case-insensitive)." }
+                },
+                @"required": @[ @"name" ]
+            }
+        };
+
+        // ── memory_extend_tag ──────────────────────────────────────────────────
+        NSDictionary *memoryExtendTag = @{
+            @"name": @"memory_extend_tag",
+            @"description":
+                @"Update the expiration of an existing tag. Pass `newExpiresAt` as ISO-8601 "
+                 "or a relative offset to set a new expiration; pass null to make the tag "
+                 "permanent. Useful for keeping a session/research tag alive past its "
+                 "original window when work continues.",
+            @"annotations": @{
+                @"readOnlyHint": @NO,
+                @"destructiveHint": @NO,
+                @"idempotentHint": @YES
+            },
+            @"inputSchema": @{
+                @"type": @"object",
+                @"properties": @{
+                    @"name": @{ @"type": @"string",
+                                @"description": @"Tag name (case-insensitive)." },
+                    @"newExpiresAt": @{
+                        @"description": @"ISO-8601 absolute datetime, relative offset (\"+30 days\"), or null to clear.",
+                        @"oneOf": @[ @{ @"type": @"string" }, @{ @"type": @"null" } ]
+                    }
+                },
+                @"required": @[ @"name" ]
             }
         };
 
@@ -541,6 +630,7 @@ static NSArray *StaticToolsList(void) {
             memoryStore, memoryRead, memoryUpdate, memoryErase,
             memoryLink, memoryLinks,
             memoryTag, memoryUntag, memoryTags,
+            memoryCreateTag, memoryDeleteTag, memoryExtendTag,
             memoryAddAttachment, memoryRecallAttachment, memoryRemoveAttachment,
             memoryAddComment, memoryRemoveComment,
             memoryRevisions, memoryAuthorList
@@ -654,6 +744,48 @@ int main(int argc, const char *argv[]) {
                         output = JSONRPCResult(rpcId, @{ @"tools": StaticToolsList() });
                     } else if ([method isEqualToString:@"tools/call"]) {
                         NSString *toolName = msg[@"params"][@"name"];
+
+                        // Pre-normalize relative-date args ("+30 days") into
+                        // ISO-8601 before forwarding. Server tools accept
+                        // strict ISO-8601; this lets Claude write ergonomically.
+                        // If normalization fails, error locally instead of
+                        // forwarding garbage.
+                        NSString *dateKey = nil;
+                        if ([toolName isEqualToString:@"memory_create_tag"]) dateKey = @"expiresAt";
+                        else if ([toolName isEqualToString:@"memory_extend_tag"]) dateKey = @"newExpiresAt";
+                        if (dateKey) {
+                            id raw = msg[@"params"][@"arguments"][dateKey];
+                            if ([raw isKindOfClass:NSString.class] && [(NSString *)raw length] > 0) {
+                                NSString *normalized = ESBridgeNormalizeRelativeDate(raw);
+                                if (!normalized) {
+                                    output = JSONRPCError(rpcId, -32602,
+                                        [NSString stringWithFormat:
+                                            @"%@: '%@' is not a valid date. "
+                                             "Pass ISO-8601 (e.g. 2026-06-01T12:00:00Z) or a relative "
+                                             "offset like \"+30 days\", \"-1 hour\", \"+2h\".",
+                                            dateKey, raw]);
+                                } else if (![raw isEqualToString:normalized]) {
+                                    // Rewrite the line so the unified
+                                    // ForwardRequest below sends the
+                                    // normalized timestamp.
+                                    NSMutableDictionary *newArgs = [msg[@"params"][@"arguments"] mutableCopy]
+                                        ?: [NSMutableDictionary dictionary];
+                                    newArgs[dateKey] = normalized;
+                                    NSMutableDictionary *newParams = [msg[@"params"] mutableCopy];
+                                    newParams[@"arguments"] = newArgs;
+                                    NSMutableDictionary *newMsg = [msg mutableCopy];
+                                    newMsg[@"params"] = newParams;
+                                    NSData *encoded = [NSJSONSerialization
+                                        dataWithJSONObject:newMsg options:0 error:nil];
+                                    if (encoded) {
+                                        line = [[NSString alloc] initWithData:encoded
+                                                                     encoding:NSUTF8StringEncoding];
+                                        msg  = newMsg; // keep msg in sync for degraded path
+                                    }
+                                }
+                            }
+                        }
+
                         if ([toolName isEqualToString:@"memory_cli"]) {
                             // Handle locally. The CLI executor will make its
                             // own HTTP calls to the server's per-tool surface.

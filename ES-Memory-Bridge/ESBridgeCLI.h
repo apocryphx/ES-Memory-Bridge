@@ -76,6 +76,20 @@ ESBridgeCallTool(NSString *toolName,
                  NSDictionary *arguments,
                  NSError * _Nullable * _Nullable errorOut);
 
+#pragma mark - Date helpers
+
+/// Accepts an absolute ISO-8601 datetime, or a relative offset of the form
+/// "+N <unit>" / "-N <unit>" / compact "+1d" / "-2h". Units: s, m, h, d, w
+/// (and longer spellings like "days", "hours", "weeks"). Returns the
+/// resolved absolute datetime as an ISO-8601 string. Returns nil on
+/// unrecognized input.
+///
+/// The bridge uses this to make tag-lifecycle tool calls ergonomic:
+/// Claude can write expiresAt="+30 days" and the server still receives
+/// a strict ISO-8601 timestamp.
+NSString * _Nullable
+ESBridgeNormalizeRelativeDate(NSString *input);
+
 #pragma mark - Execution
 
 /// Execute a parsed pipeline. Returns the response dictionary that
