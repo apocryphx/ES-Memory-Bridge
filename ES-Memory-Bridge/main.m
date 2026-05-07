@@ -160,6 +160,12 @@ static NSArray *StaticToolsList(void) {
                                    @"description": @"Retrieval-optimized summary (2-4 sentences, plain prose). "
                                                     "Embedded as the vector instead of body. Describe what the memory "
                                                     "is about, what it concludes, and why it matters." },
+                    @"language": @{ @"type": @"string",
+                                    @"description": @"ISO 639-1 language code ('en', 'de', 'fr', 'ja', etc.). "
+                                                     "Optional. If omitted, defaults to your working content language "
+                                                     "(English unless changed via memory_settings). Set explicitly only "
+                                                     "when this memory's primary language differs from your current "
+                                                     "default — e.g. you wrote a German letter but normally work in English." },
                     @"tags":    @{ @"description":
                                     @"Tags to attach. Each tag must already exist — create with memory_create_tag(name, kind) "
                                      "first. Pass an array of {name} or {name, kind} objects, an array of name strings, or a "
@@ -216,6 +222,11 @@ static NSArray *StaticToolsList(void) {
                     @"summary": @{ @"type": @"string",
                                    @"description": @"Retrieval-optimized summary (2-4 sentences, plain prose). "
                                                     "Embedded as the vector instead of body." },
+                    @"language": @{ @"type": @"string",
+                                    @"description": @"ISO 639-1 language code of the updated memory ('en', 'de', etc.). "
+                                                     "Optional. If omitted, the memory's existing language tag is preserved. "
+                                                     "Set explicitly only when you're actually changing the language of the "
+                                                     "memory's primary content." },
                     @"tags":    @{ @"type": @"array",
                                    @"description": @"Replace tags.",
                                    @"items": @{
@@ -625,6 +636,87 @@ static NSArray *StaticToolsList(void) {
             @"inputSchema": @{ @"type": @"object", @"properties": @{} }
         };
 
+        // ── memory_maintenance ─────────────────────────────────────────────────
+        // Claude's control panel for the archive. Three concerns in one tool:
+        // settings (persistent preferences), actions (bulk operations), status
+        // (live diagnostics). Per-call knobs like search focus / decayLevel are
+        // intentionally NOT settings — they're parameters on the relevant tool,
+        // so each session decides them explicitly rather than inheriting
+        // invisible state from a previous session.
+        NSDictionary *memoryMaintenance = @{
+            @"name": @"memory_maintenance",
+            @"description":
+                @"Claude's control panel for the archive. Three concerns in one surface:\n\n"
+                 "1. SETTINGS — persistent working preferences. Set via top-level fields. "
+                 "Currently: 'language' (ISO 639-1 default for new memories and queries) "
+                 "and 'embedder' (preferred vector embedder, or 'auto' to clear preference). "
+                 "Only things that *should* be inherited by the next session live here — "
+                 "per-call knobs like search focus / decayLevel are NOT settings; they're "
+                 "parameters on the relevant tool, so each session decides them explicitly.\n\n"
+                 "2. ACTIONS — bulk operations on the archive. Set via 'action' field. "
+                 "Available: 'reindex' (rebuild every vector with the active embedder — "
+                 "expensive, runs in background), 'backfill' (generate vectors only for "
+                 "memories that lack one — cheap, additive), 'purge_empty' (permanently "
+                 "erase memories with no body AND no summary, skipping locked memories — "
+                 "irreversible; reports deleted count and titles), 'dump_defects' (write "
+                 "every memory matching defect predicates to a temp file (path returned in the response) so "
+                 "Claude can read and triage them before any destructive action). 'reindex' "
+                 "and 'backfill' return immediately with status 'started'; 'purge_empty' and "
+                 "'dump_defects' complete synchronously.\n\n"
+                 "3. STATUS — called with no parameters, returns current settings, available "
+                 "embedders, archive counts (memories, vectors, missing-vectors), and pending "
+                 "work. The same status block is also returned after every settings change "
+                 "or action trigger, so one call always tells you the full picture.",
+            @"annotations": @{
+                @"readOnlyHint": @NO,
+                // Destructive when action='purge_empty' (permanent deletion of
+                // empty memories). Other paths are non-destructive. The hint
+                // is an upper bound on capability, hence YES.
+                @"destructiveHint": @YES,
+                @"idempotentHint": @YES
+            },
+            @"inputSchema": @{
+                @"type": @"object",
+                @"properties": @{
+                    @"language": @{
+                        @"type": @"string",
+                        @"description": @"ISO 639-1 code ('en', 'de', 'fr', 'ja', etc.). Becomes the "
+                                         "default language for memory_store and memory_update when no "
+                                         "per-call language is given."
+                    },
+                    @"embedder": @{
+                        @"type": @"string",
+                        @"description": @"Identifier of a registered embedder (see 'availableEmbedders' "
+                                         "in the response). Pass 'auto' to clear the explicit preference "
+                                         "and fall back to the cold-start heuristic."
+                    },
+                    @"resetHeuristic": @{
+                        @"description": @"If true, clears the cached cold-start heuristic embedder choice "
+                                         "so it re-runs on next encode. Use after substantial archive growth "
+                                         "in a previously-rare language. Default: false.",
+                        @"oneOf": @[ @{ @"type": @"boolean" }, @{ @"type": @"string" } ]
+                    },
+                    @"action": @{
+                        @"type": @"string",
+                        @"description": @"Trigger a bulk operation. 'reindex' = rebuild every vector with "
+                                         "the active embedder (expensive — only after switching embedder, "
+                                         "or to repair systemic vector drift; runs in background). "
+                                         "'backfill' = generate vectors only for memories that lack one "
+                                         "(cheap, safe to run anytime; runs in background). 'purge_empty' "
+                                         "= permanently erase memories with no body AND no summary, "
+                                         "skipping locked memories (irreversible; completes synchronously "
+                                         "and reports the deleted count + titles). 'dump_defects' = write "
+                                         "every memory matching defect predicates to a temp file (path returned in the response) "
+                                         "so Claude can read and triage them before any destructive action. "
+                                         "After background actions, re-call with no arguments to see "
+                                         "progress via 'pendingVectorOperations'.",
+                        @"enum": @[ @"reindex", @"backfill", @"purge_empty", @"dump_defects" ]
+                    }
+                },
+                @"required": @[]
+            }
+        };
+
         tools = @[
             memoryCLI,
             memoryStore, memoryRead, memoryUpdate, memoryErase,
@@ -633,7 +725,8 @@ static NSArray *StaticToolsList(void) {
             memoryCreateTag, memoryDeleteTag, memoryExtendTag,
             memoryAddAttachment, memoryRecallAttachment, memoryRemoveAttachment,
             memoryAddComment, memoryRemoveComment,
-            memoryRevisions, memoryAuthorList
+            memoryRevisions, memoryAuthorList,
+            memoryMaintenance
         ];
     });
     return tools;

@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "es-memory-bridge",
   "display_name": "ES Memory",
-  "version": "2.0.0",
+  "version": "2.4.1",
   "description": "Intelligent stdio bridge to the ES Memory MCP server. Hosts a Unix-pipeline-style search surface (memory_cli) on top of the server's per-tool MCP API: bridge composes pipelines into server calls, server stays minimal. Provides Claude with persistent memory: store, retrieve, organize, curate, and chain memories across sessions. Requires the ES Memory app to be running locally.",
   "author": {
     "name": "Kolja Wawrowsky"
