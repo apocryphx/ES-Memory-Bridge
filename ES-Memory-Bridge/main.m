@@ -166,6 +166,15 @@ static NSArray *StaticToolsList(void) {
                                                      "(English unless changed via memory_settings). Set explicitly only "
                                                      "when this memory's primary language differs from your current "
                                                      "default — e.g. you wrote a German letter but normally work in English." },
+                    @"dateCreated": @{ @"type": @"string",
+                                       @"description": @"Optional override for the memory's creation timestamp. "
+                                                        "If omitted, the server uses the current time — the right default "
+                                                        "for memories authored in the moment. Provide an ISO-8601 timestamp "
+                                                        "('2025-08-10T14:00:00Z') or a relative offset ('-30 days', '-2h'); "
+                                                        "the bridge normalizes relative offsets before forwarding. Use this "
+                                                        "for imports, backfilled sessions, or filing a letter dated long "
+                                                        "before today. dateModified is always set to now regardless — that's "
+                                                        "the moment the row entered the archive." },
                     @"tags":    @{ @"description":
                                     @"Tags to attach. Each tag must already exist — create with memory_create_tag(name, kind) "
                                      "first. Pass an array of {name} or {name, kind} objects, an array of name strings, or a "
@@ -227,6 +236,15 @@ static NSArray *StaticToolsList(void) {
                                                      "Optional. If omitted, the memory's existing language tag is preserved. "
                                                      "Set explicitly only when you're actually changing the language of the "
                                                      "memory's primary content." },
+                    @"dateCreated": @{ @"type": @"string",
+                                       @"description": @"Optional retrofit of the historical creation timestamp. "
+                                                        "ISO-8601 ('2025-08-10T14:00:00Z') or a relative offset ('-30 days', "
+                                                        "'-2h'); the bridge normalizes relative offsets. Use this to correct "
+                                                        "a memory whose creation date is wrong — typically because it was "
+                                                        "imported or bulk re-saved and lost its original authoring date. "
+                                                        "dateModified always updates to now (this IS a modification); the "
+                                                        "previous values of both dateCreated and dateModified are preserved "
+                                                        "on the revision snapshot." },
                     @"tags":    @{ @"type": @"array",
                                    @"description": @"Replace tags.",
                                    @"items": @{
@@ -637,80 +655,69 @@ static NSArray *StaticToolsList(void) {
         };
 
         // ── memory_maintenance ─────────────────────────────────────────────────
-        // Claude's control panel for the archive. Three concerns in one tool:
-        // settings (persistent preferences), actions (bulk operations), status
-        // (live diagnostics). Per-call knobs like search focus / decayLevel are
-        // intentionally NOT settings — they're parameters on the relevant tool,
-        // so each session decides them explicitly rather than inheriting
-        // invisible state from a previous session.
+        // Control panel for embedder configuration and archive housekeeping.
+        // Three modes (status / settings / actions). Each call does exactly one
+        // thing — switching the active embedder is preference-only and never
+        // triggers vector work; vectors from prior embedders coexist
+        // (namespaced by embedderID). See doc://memory_maintenance_spec for
+        // the full interface contract; the in-app server is the source of
+        // truth for behaviour, this schema mirrors it for the MCP handshake.
         NSDictionary *memoryMaintenance = @{
             @"name": @"memory_maintenance",
             @"description":
-                @"Claude's control panel for the archive. Three concerns in one surface:\n\n"
-                 "1. SETTINGS — persistent working preferences. Set via top-level fields. "
-                 "Currently: 'language' (ISO 639-1 default for new memories and queries) "
-                 "and 'embedder' (preferred vector embedder, or 'auto' to clear preference). "
-                 "Only things that *should* be inherited by the next session live here — "
-                 "per-call knobs like search focus / decayLevel are NOT settings; they're "
-                 "parameters on the relevant tool, so each session decides them explicitly.\n\n"
-                 "2. ACTIONS — bulk operations on the archive. Set via 'action' field. "
-                 "Available: 'reindex' (rebuild every vector with the active embedder — "
-                 "expensive, runs in background), 'backfill' (generate vectors only for "
-                 "memories that lack one — cheap, additive), 'purge_empty' (permanently "
-                 "erase memories with no body AND no summary, skipping locked memories — "
-                 "irreversible; reports deleted count and titles), 'dump_defects' (write "
-                 "every memory matching defect predicates to a temp file (path returned in the response) so "
-                 "Claude can read and triage them before any destructive action). 'reindex' "
-                 "and 'backfill' return immediately with status 'started'; 'purge_empty' and "
-                 "'dump_defects' complete synchronously.\n\n"
-                 "3. STATUS — called with no parameters, returns current settings, available "
-                 "embedders, archive counts (memories, vectors, missing-vectors), and pending "
-                 "work. The same status block is also returned after every settings change "
-                 "or action trigger, so one call always tells you the full picture.",
+                @"Control panel for embedder configuration and archive housekeeping. Three modes:\n\n"
+                 "1. STATUS — call with no parameters. Returns active/preferred/recommended "
+                 "embedder, the available-embedder list, archive counts (memoryCount, "
+                 "activeVectorCount, memoriesWithoutActiveVector), pending vector ops, and "
+                 "orphan-vector report. Always safe.\n\n"
+                 "2. SETTINGS — `setEmbedder` sets the preferred embedder by identifier. Pass "
+                 "\"auto\" to clear the preference and let the engine pick by priority. Does "
+                 "NOT trigger any vector work — switching is preference-only and existing "
+                 "vectors from other embedders coexist (namespaced by embedderID). After "
+                 "switching, run `backfill` to populate the new embedder's vectors.\n\n"
+                 "3. ACTIONS — set `action` to one of:\n"
+                 "   - `backfill`: generate vectors for memories missing one under the active "
+                 "embedder. Additive, safe to run anytime, runs in background. Returns "
+                 "immediately with status \"backfill_started\"; poll `pendingVectorOperations` "
+                 "until 0.\n"
+                 "   - `erase`: synchronously delete every vector owned by the active embedder. "
+                 "Destructive and irreversible. Run before `backfill` for a full re-embed under "
+                 "the active embedder.\n"
+                 "   - `clean`: remove dead weight in one pass — orphaned vectors (embedderID "
+                 "not registered) and empty memories (no body and no summary, skipping "
+                 "locked). Synchronous; returns counts and identifiers/titles of what was "
+                 "removed.\n\n"
+                 "All actions refuse with status \"action_refused\" if `pendingVectorOperations "
+                 "> 0`. Wait for pending to reach zero, then retry.\n\n"
+                 "Migration sequence (full re-embed): setEmbedder → status (verify) → erase → "
+                 "backfill → status (poll).",
             @"annotations": @{
                 @"readOnlyHint": @NO,
-                // Destructive when action='purge_empty' (permanent deletion of
-                // empty memories). Other paths are non-destructive. The hint
-                // is an upper bound on capability, hence YES.
+                // Destructive when action='erase' or 'clean' (permanent
+                // deletion). Status / settings / backfill paths are
+                // non-destructive. The hint is an upper bound on capability.
                 @"destructiveHint": @YES,
                 @"idempotentHint": @YES
             },
             @"inputSchema": @{
                 @"type": @"object",
+                @"additionalProperties": @NO,
                 @"properties": @{
-                    @"language": @{
+                    @"setEmbedder": @{
                         @"type": @"string",
-                        @"description": @"ISO 639-1 code ('en', 'de', 'fr', 'ja', etc.). Becomes the "
-                                         "default language for memory_store and memory_update when no "
-                                         "per-call language is given."
-                    },
-                    @"embedder": @{
-                        @"type": @"string",
-                        @"description": @"Identifier of a registered embedder (see 'availableEmbedders' "
-                                         "in the response). Pass 'auto' to clear the explicit preference "
-                                         "and fall back to the cold-start heuristic."
-                    },
-                    @"resetHeuristic": @{
-                        @"description": @"If true, clears the cached cold-start heuristic embedder choice "
-                                         "so it re-runs on next encode. Use after substantial archive growth "
-                                         "in a previously-rare language. Default: false.",
-                        @"oneOf": @[ @{ @"type": @"boolean" }, @{ @"type": @"string" } ]
+                        @"description": @"Set the preferred embedder. Pass an identifier from "
+                                         "`availableEmbedders` in the status response, or \"auto\" to clear "
+                                         "the preference. Does nothing else — no vector ops. Safe during a "
+                                         "running backfill."
                     },
                     @"action": @{
                         @"type": @"string",
-                        @"description": @"Trigger a bulk operation. 'reindex' = rebuild every vector with "
-                                         "the active embedder (expensive — only after switching embedder, "
-                                         "or to repair systemic vector drift; runs in background). "
-                                         "'backfill' = generate vectors only for memories that lack one "
-                                         "(cheap, safe to run anytime; runs in background). 'purge_empty' "
-                                         "= permanently erase memories with no body AND no summary, "
-                                         "skipping locked memories (irreversible; completes synchronously "
-                                         "and reports the deleted count + titles). 'dump_defects' = write "
-                                         "every memory matching defect predicates to a temp file (path returned in the response) "
-                                         "so Claude can read and triage them before any destructive action. "
-                                         "After background actions, re-call with no arguments to see "
-                                         "progress via 'pendingVectorOperations'.",
-                        @"enum": @[ @"reindex", @"backfill", @"purge_empty", @"dump_defects" ]
+                        @"description": @"Bulk operation to fire. `backfill` = embed memories missing the "
+                                         "active vector (background; returns immediately). `erase` = delete "
+                                         "all active-embedder vectors (synchronous, destructive). `clean` = "
+                                         "remove orphaned vectors + empty memories (synchronous). All "
+                                         "actions refuse if pendingVectorOperations > 0.",
+                        @"enum": @[ @"backfill", @"erase", @"clean" ]
                     }
                 },
                 @"required": @[]
@@ -842,40 +849,51 @@ int main(int argc, const char *argv[]) {
                         // ISO-8601 before forwarding. Server tools accept
                         // strict ISO-8601; this lets Claude write ergonomically.
                         // If normalization fails, error locally instead of
-                        // forwarding garbage.
-                        NSString *dateKey = nil;
-                        if ([toolName isEqualToString:@"memory_create_tag"]) dateKey = @"expiresAt";
-                        else if ([toolName isEqualToString:@"memory_extend_tag"]) dateKey = @"newExpiresAt";
-                        if (dateKey) {
+                        // forwarding garbage. Per-tool list of date keys to
+                        // normalize — extend the table when a new tool grows
+                        // a date-shaped argument.
+                        NSArray<NSString *> *dateKeys = nil;
+                        if ([toolName isEqualToString:@"memory_create_tag"])      dateKeys = @[ @"expiresAt" ];
+                        else if ([toolName isEqualToString:@"memory_extend_tag"]) dateKeys = @[ @"newExpiresAt" ];
+                        else if ([toolName isEqualToString:@"memory_store"])     dateKeys = @[ @"dateCreated" ];
+                        else if ([toolName isEqualToString:@"memory_update"])    dateKeys = @[ @"dateCreated" ];
+                        BOOL dateNormFailed = NO;
+                        NSMutableDictionary *normalizedArgs = nil;
+                        for (NSString *dateKey in dateKeys) {
                             id raw = msg[@"params"][@"arguments"][dateKey];
-                            if ([raw isKindOfClass:NSString.class] && [(NSString *)raw length] > 0) {
-                                NSString *normalized = ESBridgeNormalizeRelativeDate(raw);
-                                if (!normalized) {
-                                    output = JSONRPCError(rpcId, -32602,
-                                        [NSString stringWithFormat:
-                                            @"%@: '%@' is not a valid date. "
-                                             "Pass ISO-8601 (e.g. 2026-06-01T12:00:00Z) or a relative "
-                                             "offset like \"+30 days\", \"-1 hour\", \"+2h\".",
-                                            dateKey, raw]);
-                                } else if (![raw isEqualToString:normalized]) {
-                                    // Rewrite the line so the unified
-                                    // ForwardRequest below sends the
-                                    // normalized timestamp.
-                                    NSMutableDictionary *newArgs = [msg[@"params"][@"arguments"] mutableCopy]
+                            if (![raw isKindOfClass:NSString.class] || [(NSString *)raw length] == 0) continue;
+                            NSString *normalized = ESBridgeNormalizeRelativeDate(raw);
+                            if (!normalized) {
+                                output = JSONRPCError(rpcId, -32602,
+                                    [NSString stringWithFormat:
+                                        @"%@: '%@' is not a valid date. "
+                                         "Pass ISO-8601 (e.g. 2026-06-01T12:00:00Z) or a relative "
+                                         "offset like \"+30 days\", \"-1 hour\", \"+2h\".",
+                                        dateKey, raw]);
+                                dateNormFailed = YES;
+                                break;
+                            }
+                            if (![raw isEqualToString:normalized]) {
+                                if (!normalizedArgs) {
+                                    normalizedArgs = [msg[@"params"][@"arguments"] mutableCopy]
                                         ?: [NSMutableDictionary dictionary];
-                                    newArgs[dateKey] = normalized;
-                                    NSMutableDictionary *newParams = [msg[@"params"] mutableCopy];
-                                    newParams[@"arguments"] = newArgs;
-                                    NSMutableDictionary *newMsg = [msg mutableCopy];
-                                    newMsg[@"params"] = newParams;
-                                    NSData *encoded = [NSJSONSerialization
-                                        dataWithJSONObject:newMsg options:0 error:nil];
-                                    if (encoded) {
-                                        line = [[NSString alloc] initWithData:encoded
-                                                                     encoding:NSUTF8StringEncoding];
-                                        msg  = newMsg; // keep msg in sync for degraded path
-                                    }
                                 }
+                                normalizedArgs[dateKey] = normalized;
+                            }
+                        }
+                        if (!dateNormFailed && normalizedArgs) {
+                            // Rewrite the line so the unified ForwardRequest
+                            // below sends the normalized timestamps.
+                            NSMutableDictionary *newParams = [msg[@"params"] mutableCopy];
+                            newParams[@"arguments"] = normalizedArgs;
+                            NSMutableDictionary *newMsg = [msg mutableCopy];
+                            newMsg[@"params"] = newParams;
+                            NSData *encoded = [NSJSONSerialization
+                                dataWithJSONObject:newMsg options:0 error:nil];
+                            if (encoded) {
+                                line = [[NSString alloc] initWithData:encoded
+                                                             encoding:NSUTF8StringEncoding];
+                                msg  = newMsg; // keep msg in sync for degraded path
                             }
                         }
 
