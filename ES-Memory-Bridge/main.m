@@ -209,7 +209,11 @@ static NSArray *StaticToolsList(void) {
             @"description": @"Revise an existing memory. Previous version preserved automatically. "
                              "Refused on locked memories. Provide a summary when changing the body — "
                              "a 2-4 sentence plain prose description for vector search. "
-                             "If omitted, the old summary is cleared.",
+                             "If omitted, the old summary is cleared. "
+                             "Pass append=true to concatenate the body to the existing body (joined "
+                             "with a newline) instead of replacing it; on append no revision is "
+                             "created, the existing summary is retained unless a new one is provided, "
+                             "and reason is ignored.",
             @"annotations": @{
                 @"readOnlyHint": @NO,
                 @"destructiveHint": @NO,
@@ -221,8 +225,10 @@ static NSArray *StaticToolsList(void) {
                     @"title":   @{ @"type": @"string", @"description": @"Title to update." },
                     @"author":  authorProp,
                     @"index":   disambigIndex,
-                    @"body":    @{ @"type": @"string", @"description": @"New body text." },
-                    @"reason":  @{ @"type": @"string", @"description": @"Why this revision." },
+                    @"body":    @{ @"type": @"string", @"description": @"New body text. When append=true, this is the delta to concatenate to the existing body." },
+                    @"reason":  @{ @"type": @"string", @"description": @"Optional. Why this revision — stored on the revision snapshot. Ignored when append=true (no revision is created)." },
+                    @"append":  @{ @"description": @"When true, body is appended to the existing body (joined with a single newline) instead of replacing it. No revision is created. Summary is retained unless explicitly replaced. dateModified is updated. Default false.",
+                                   @"oneOf": @[ @{ @"type": @"boolean" }, @{ @"type": @"string" } ] },
                     @"type":    @{ @"type": @"string", @"description": @"Update classification." },
                     @"locked":  @{ @"description": @"Change lock.",
                                    @"oneOf": @[ @{ @"type": @"boolean" }, @{ @"type": @"string" } ] },
@@ -256,7 +262,7 @@ static NSArray *StaticToolsList(void) {
                                        @"required": @[ @"name" ]
                                    } }
                 },
-                @"required": @[ @"title", @"body", @"reason" ]
+                @"required": @[ @"title", @"body" ]
             }
         };
 
