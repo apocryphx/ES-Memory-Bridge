@@ -37,22 +37,24 @@ Requires Xcode and Node (for `npx @anthropic-ai/mcpb pack`).
 ```bash
 git clone https://github.com/apocryphx/ES-Memory-Bridge.git
 cd ES-Memory-Bridge
-xcodebuild -scheme ES-Memory-Bridge -configuration Release build
+xcodebuild -project ES-Memory-Bridge.xcodeproj -scheme ES-Memory-Bridge -configuration Release build
 ```
 
-The build's "Package MCPB" run-script phase produces `ES-Memory-Bridge.mcpb` at the project root.
+The build's "Package MCPB" run-script phase produces `ES-Memory-Bridge.mcpb` at the project root. `scripts/package-mcpb.sh` does the same end-to-end with a clean isolated derived-data path (suitable for release). `scripts/smoke-test.sh` verifies cold-start, warm-start, and `memory_cli` behavior against a Debug build.
 
 ## How it works
 
-Claude Desktop launches the bridge from the unpacked `.mcpb` and speaks JSON-RPC to it over stdio. The bridge handles each request in one of three ways:
+Claude Desktop launches the bridge from the unpacked `.mcpb` and speaks JSON-RPC to it over stdio. The bridge is an `NSApplication` accessory (`LSUIElement=true`) — no Dock icon, no menubar item — with a three-queue MCP server (read / work / write) running on the main runloop. The AppKit lifecycle is in place so a future preferences window or status item can attach without re-architecting; today it has no UI.
 
-1. **`tools/list`** — always answered locally from the bridge's filtered static schema. Claude sees `memory_cli` plus the non-search tools (CRUD, links, tags, attachments, comments, revisions). The server's per-tool search surface (`memory_search`, `memory_grep`, `memory_recent`, `memory_tagged`, `memory_discover`) is hidden — `memory_cli` subsumes them.
+Each request is handled in one of three ways:
+
+1. **`tools/list`** — answered locally from a cached schema. On launch the bridge fetches `tools/list` from the server and persists it to `~/Library/Caches/com.elarity.es-memory-mcp/tools.json`. Subsequent launches serve from the cache and refresh asynchronously when stale (default 24h, override via the `ESMBSchemaCacheTTL` `NSUserDefaults` key). Cold start with no cache and no server falls back to a bootstrap JSON shipped inside the `.app` bundle. `memory_cli` is the bridge-local tool — always present, merged in memory only.
 
 2. **`tools/call(memory_cli, expression)`** — handled locally by the bridge's CLI executor. The expression is a Unix-style pipeline (`lfind --tag X | w2vgrep "Y" | head 5`); the executor parses it, composes server calls (typically one with rich filter parameters, sometimes two with bridge-side intersection for compositions like `discover | w2vgrep`), and returns a single response with both per-stage pipeline diagnostics and final results. Try `memory_cli("man")` to see the command vocabulary.
 
 3. **Everything else** — forwarded transparently to the server at `http://localhost:59123/mcp`. CRUD operations, comments, links, attachments all pass through unchanged.
 
-The bridge reads **zero files** — no config, no discovery, no shared state with the host. No file IO means no macOS TCC prompts, ever.
+The bridge writes one file: the schema cache at `~/Library/Caches/com.elarity.es-memory-mcp/tools.json`. That path is TCC-unrestricted, so no privacy prompts. No config files, no host discovery, no shared state with the server.
 
 ### Why a CLI in the bridge
 
@@ -67,7 +69,7 @@ The CLI is composition logic. It has no business in the data server. Putting it 
 The bridge doesn't fail silently. If the HTTP forward fails (host not running, or went down mid-session), the bridge enters degraded mode:
 
 - `initialize` returns a stub with `serverInfo.name: "ES Memory (offline)"` and an `instructions` field telling the user to launch the app.
-- `tools/list` is unaffected — it's always served from the bridge's local schema, host up or down. Claude sees the same 17-tool surface either way.
+- `tools/list` is unaffected — it's always served from the bridge's cached schema (disk cache, falling back to the bundled bootstrap), host up or down.
 - `tools/call(memory_cli, ...)` will fail at the first server-call stage when the bridge tries to reach the host; the response surfaces a clear error.
 - Other `tools/call` returns `isError: true` with a tool-specific message: _"ES Memory is not running. Launch ES Memory.app from /Applications to use '<tool>', then ask Claude to retry."_
 
@@ -83,16 +85,28 @@ On every subsequent request the bridge attempts the forward again, so the moment
 ```
 ES-Memory-Bridge/
 ├── ES-Memory-Bridge/
-│   ├── main.m                     # stdio loop, HTTP forwarder, static schema, dispatch
-│   ├── ESBridgeCLI.{h,m}          # tokenizer, parser, executor, server-call helper
-│   ├── ESBridgeCLICommands.{h,m}  # stage handlers + man pages
-│   └── Info.plist                 # CFBundleIdentifier = com.elarity.es-memory-bridge
-├── ES-Memory-Bridge.xcodeproj/    # Xcode project (synchronized folder model)
+│   ├── main.m                          # NSApplication entry, sets up AppDelegate
+│   ├── AppDelegate.{h,m}               # lifecycle; starts SchemaCache + MCPServer
+│   ├── MCPServer.{h,m}                 # three-queue STDIO loop, dispatch, EOF drain
+│   ├── SchemaCache.{h,m}               # disk cache + bundle bootstrap + async refresh
+│   ├── Forwarder.{h,m}                 # HTTP forward (sync + async), reachability state
+│   ├── MCPFraming.{h,m}                # JSON-RPC 2.0 framing helpers
+│   ├── DegradedResponses.{h,m}         # host-offline fallback responses
+│   ├── ESBridgeCLI.{h,m}               # memory_cli tokenizer, parser, executor
+│   ├── ESMemoryBridge.entitlements     # app-sandbox = false (required for STDIO)
+│   ├── Resources/
+│   │   └── tools-bootstrap.json        # cold-start schema fallback (server-derived)
+│   └── Info.plist                      # LSUIElement=true, NSPrincipalClass=NSApplication
+├── ES-Memory-Bridge.xcodeproj/         # Xcode project (filesystem-synchronized group)
 ├── bundle/
-│   ├── manifest.json              # MCPB manifest (v0.3, bundle version 2.0.0)
-│   ├── icon.png                   # Extension icon
-│   └── server/                    # Binary copied here by build phase
-└── ES-Memory-Bridge.mcpb          # Packaged bundle (built automatically)
+│   ├── manifest.json                   # MCPB manifest (v0.3, bundle version 2.6.0)
+│   ├── icon.png                        # extension icon
+│   └── server/                         # .app staged here by build phase (gitignored)
+├── scripts/
+│   ├── extract-bootstrap-tools.sh      # regenerate Resources/tools-bootstrap.json
+│   ├── smoke-test.sh                   # cold/warm/memory_cli verification
+│   └── package-mcpb.sh                 # clean Release → .mcpb
+└── ES-Memory-Bridge.mcpb               # packaged bundle (built automatically)
 ```
 
 ## Privacy
