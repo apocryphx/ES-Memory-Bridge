@@ -20,7 +20,7 @@
 
 /* Begin PBXFileReference section */
 		150EAAC42F92839500260908 /* icon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = icon.png; sourceTree = "<group>"; };
-		15B0787D2F91D67F00C19CBA /* ES-Memory-Bridge */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "ES-Memory-Bridge"; sourceTree = BUILT_PRODUCTS_DIR; };
+		15B0787D2F91D67F00C19CBA /* ES_Memory_Bridge.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "ES_Memory_Bridge.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -54,7 +54,7 @@
 		15B0787E2F91D67F00C19CBA /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				15B0787D2F91D67F00C19CBA /* ES-Memory-Bridge */,
+				15B0787D2F91D67F00C19CBA /* ES_Memory_Bridge.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -69,6 +69,7 @@
 				15B078792F91D67F00C19CBA /* Sources */,
 				15B0787A2F91D67F00C19CBA /* Frameworks */,
 				15B0787B2F91D67F00C19CBA /* CopyFiles */,
+				15B0789B2F91D80100C19CBB /* Copy Bootstrap */,
 				15B0789A2F91D80000C19CBA /* Package MCPB */,
 			);
 			buildRules = (
@@ -82,8 +83,8 @@
 			packageProductDependencies = (
 			);
 			productName = "ES-Memory-Bridge";
-			productReference = 15B0787D2F91D67F00C19CBA /* ES-Memory-Bridge */;
-			productType = "com.apple.product-type.tool";
+			productReference = 15B0787D2F91D67F00C19CBA /* ES_Memory_Bridge.app */;
+			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
 
@@ -119,13 +120,29 @@
 /* End PBXProject section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		15B0789B2F91D80100C19CBB /* Copy Bootstrap */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/ES-Memory-Bridge/Resources/tools-bootstrap.json",
+			);
+			name = "Copy Bootstrap";
+			outputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/$(PRODUCT_NAME).app/Contents/Resources/tools-bootstrap.json",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/zsh;
+			shellScript = "# Copy the schema-cache bootstrap JSON into the .app's Resources/ folder.\n# SchemaCache reads this via NSBundle.mainBundle.pathForResource: as the\n# cold-start fallback when no on-disk cache exists yet.\nDEST_DIR=\"${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app/Contents/Resources\"\nmkdir -p \"${DEST_DIR}\"\ncp \"${SRCROOT}/ES-Memory-Bridge/Resources/tools-bootstrap.json\" \"${DEST_DIR}/tools-bootstrap.json\"\n";
+		};
 		15B0789A2F91D80000C19CBA /* Package MCPB */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			inputPaths = (
-				"$(BUILT_PRODUCTS_DIR)/$(PRODUCT_NAME)",
+				"$(BUILT_PRODUCTS_DIR)/$(PRODUCT_NAME).app",
 				"$(SRCROOT)/bundle/manifest.json",
 				"$(SRCROOT)/icon.png",
 			);
@@ -135,7 +152,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/zsh;
-			shellScript = "# Copy icon.png from project root (Xcode-managed source of truth) into bundle/\ncp \"${SRCROOT}/icon.png\" \"${SRCROOT}/bundle/icon.png\"\n\n# Copy built binary into bundle\nmkdir -p \"${SRCROOT}/bundle/server\"\ncp \"${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}\" \"${SRCROOT}/bundle/server/${PRODUCT_NAME}\"\n\n# Re-sign for distribution (codesign is stripped by cp in some contexts)\ncodesign --force --sign - -o runtime \"${SRCROOT}/bundle/server/${PRODUCT_NAME}\"\n\n# Pack MCPB\nexport PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\"\nnpx @anthropic-ai/mcpb pack \"${SRCROOT}/bundle/\" \"${SRCROOT}/ES-Memory-Bridge.mcpb\"\n";
+			shellScript = "# Copy icon.png from project root (Xcode-managed source of truth) into bundle/\ncp \"${SRCROOT}/icon.png\" \"${SRCROOT}/bundle/icon.png\"\n\n# Stage the just-built .app into bundle/server/\nrm -rf \"${SRCROOT}/bundle/server\"\nmkdir -p \"${SRCROOT}/bundle/server\"\nditto \"${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app\" \"${SRCROOT}/bundle/server/${PRODUCT_NAME}.app\"\n\n# Strip xattrs that corrupt the zip\nxattr -cr \"${SRCROOT}/bundle/server\" 2>/dev/null || true\n\n# Re-sign the staged bundle (deep so nested resources sign too)\ncodesign --force --deep --sign - -o runtime \"${SRCROOT}/bundle/server/${PRODUCT_NAME}.app\"\n\n# Pack MCPB\nexport PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\"\nnpx --yes @anthropic-ai/mcpb pack \"${SRCROOT}/bundle/\" \"${SRCROOT}/ES-Memory-Bridge.mcpb\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -204,7 +221,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 26.3;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -260,7 +277,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 26.3;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
@@ -270,28 +287,30 @@
 		15B078852F91D67F00C19CBA /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "ES-Memory-Bridge/ESMemoryBridge.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
 				DEVELOPMENT_TEAM = 2PYWYF3C55;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = "ES-Memory-Bridge/Info.plist";
+				MARKETING_VERSION = 2.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.elarity.es-memory-mcp";
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = ES_Memory_Bridge;
 			};
 			name = Debug;
 		};
 		15B078862F91D67F00C19CBA /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "ES-Memory-Bridge/ESMemoryBridge.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
 				DEVELOPMENT_TEAM = 2PYWYF3C55;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = "ES-Memory-Bridge/Info.plist";
+				MARKETING_VERSION = 2.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.elarity.es-memory-mcp";
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = ES_Memory_Bridge;
 			};
 			name = Release;
 		};

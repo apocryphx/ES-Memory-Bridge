@@ -4,6 +4,7 @@
 //
 
 #import "ESBridgeCLI.h"
+#import <stdatomic.h>
 
 #pragma mark - Date helpers
 
@@ -395,8 +396,11 @@ NSDictionary * _Nullable
 ESBridgeCallTool(NSString *toolName,
                  NSDictionary *arguments,
                  NSError * _Nullable * _Nullable errorOut) {
-    static NSInteger nextId = 1000;
-    NSInteger thisId = ++nextId;
+    // Atomic so concurrent memory_cli pipelines (running on MCPServer's
+    // concurrent work queue) can't collide on the same JSON-RPC id and
+    // confuse response routing.
+    static _Atomic NSInteger nextId = 1000;
+    NSInteger thisId = atomic_fetch_add(&nextId, 1) + 1;
 
     NSDictionary *envelope = @{
         @"jsonrpc": @"2.0",

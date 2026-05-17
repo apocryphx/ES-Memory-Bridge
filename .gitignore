@@ -9,8 +9,8 @@ DerivedData/
 *.xcodeproj/project.xcworkspace/xcuserdata/
 *.xcodeproj/project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
 
-# Bundle binary (rebuilt from source)
-bundle/server/ES-Memory-Bridge
+# Bundle binary / .app (rebuilt from source)
+bundle/server/
 
 # Bundle icon (copied from project-root icon.png by the Package MCPB build phase)
 bundle/icon.png

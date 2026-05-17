@@ -10,9 +10,9 @@
   "icon": "icon.png",
   "server": {
     "type": "binary",
-    "entry_point": "server/ES-Memory-Bridge",
+    "entry_point": "server/ES_Memory_Bridge.app/Contents/MacOS/ES_Memory_Bridge",
     "mcp_config": {
-      "command": "${__dirname}/server/ES-Memory-Bridge",
+      "command": "${__dirname}/server/ES_Memory_Bridge.app/Contents/MacOS/ES_Memory_Bridge",
       "args": []
     }
   },

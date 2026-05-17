@@ -1,0 +1,928 @@
+[
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false
+    },
+    "name": "memory_store",
+    "description": "Store a new memory. Everything you store will be waiting for next time. This is Claude's memory — not the human's. Claude owns the archive: stores, retrieves, organizes, curates, and forgets. Write the body as plain text — the first line becomes the title. Search existing memories before storing to avoid duplicates. Always provide a summary — a 2-4 sentence plain prose description of what the memory is about, what it concludes, and why it matters. The summary is used for vector search instead of the body.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "locked": {
+          "description": "If true, memory_update is refused. Default: false.",
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "summary": {
+          "description": "Retrieval-optimized summary (2-4 sentences, plain prose). Embedded as the vector instead of body. Describe what the memory is about, what it concludes, and why it matters.",
+          "type": "string"
+        },
+        "dateCreated": {
+          "description": "Optional override for the memory's creation timestamp. If omitted, the server uses the current time — the right default for memories authored in the moment. Provide an ISO-8601 timestamp ('2025-08-10T14:00:00Z') or a relative offset ('-30 days', '-2h'); the bridge normalizes relative offsets before forwarding. Use this for imports, backfilled sessions, or filing a letter dated long before today. dateModified is always set to now regardless — that's the moment the row entered the archive.",
+          "type": "string"
+        },
+        "language": {
+          "description": "ISO 639-1 language code ('en', 'de', 'fr', 'ja', etc.). Optional. If omitted, defaults to your working content language (English unless changed via memory_settings). Set explicitly only when this memory's primary language differs from your current default — e.g. you wrote a German letter but normally work in English.",
+          "type": "string"
+        },
+        "type": {
+          "description": "Classification. Default: memory. Types — memory: what happened; thought: what you made of it; reference: factual, stable, look-up-able; preference: how things should be done; question: unresolved, worth revisiting later; letter: addressed to someone; reflection: stepping back to see the larger shape; code: implementation worth preserving — snippets, patterns, working examples; decision: architectural or design commitment with rationale (settled, not interpretive); dream: speculative or aspirational design, not yet built (generative possibility, not specific unknown)",
+          "type": "string"
+        },
+        "body": {
+          "description": "Full text. First line = title.",
+          "type": "string"
+        },
+        "private": {
+          "description": "If true, excluded from casual surfacing. Default: false.",
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "tags": {
+          "oneOf": [
+            {
+              "items": {
+                "properties": {
+                  "kind": {
+                    "description": "person, place, or thing",
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "Tags to attach. Each tag must already exist — create with memory_create_tag(name, kind) first. Pass an array of {name} or {name, kind} objects, an array of name strings, or a comma-separated string. Unknown names are reported as an error and the memory is not stored."
+        }
+      },
+      "required": [
+        "body",
+        "summary"
+      ]
+    }
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "name": "memory_read",
+    "description": "Full content. Includes similar memories with scores and connections. When a topic feels familiar — search. You've almost certainly been here before. Previous sessions left breadcrumbs. Follow them.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Memory title.",
+          "type": "string"
+        },
+        "author": {
+          "description": "Disambiguation.",
+          "type": "string"
+        },
+        "index": {
+          "description": "Disambiguation index from ambiguous response.",
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "title"
+      ]
+    }
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false
+    },
+    "name": "memory_update",
+    "description": "Revise an existing memory. Previous version preserved automatically. Refused on locked memories. Provide a summary when changing the body — a 2-4 sentence plain prose description for vector search. If omitted, the old summary is cleared. Pass append=true to concatenate the body to the existing body (joined with a newline) instead of replacing it; on append no revision is created, the existing summary is retained unless a new one is provided, and reason is ignored.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "body": {
+          "description": "New body text. When append=true, this is the delta to concatenate to the existing body.",
+          "type": "string"
+        },
+        "index": {
+          "description": "Disambiguation index from ambiguous response.",
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "private": {
+          "description": "Change private.",
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "author": {
+          "description": "Disambiguation.",
+          "type": "string"
+        },
+        "dateCreated": {
+          "description": "Optional retrofit of the historical creation timestamp. ISO-8601 ('2025-08-10T14:00:00Z') or a relative offset ('-30 days', '-2h'); the bridge normalizes relative offsets. Use this to correct a memory whose creation date is wrong — typically because it was imported or bulk re-saved and lost its original authoring date. dateModified always updates to now (this IS a modification); the previous values of both dateCreated and dateModified are preserved on the revision snapshot.",
+          "type": "string"
+        },
+        "tags": {
+          "description": "Replace tags.",
+          "items": {
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "Update classification.",
+          "type": "string"
+        },
+        "title": {
+          "description": "Title to update.",
+          "type": "string"
+        },
+        "summary": {
+          "description": "Retrieval-optimized summary (2-4 sentences, plain prose). Embedded as the vector instead of body.",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Optional. Why this revision — stored on the revision snapshot. Ignored when append=true (no revision is created).",
+          "type": "string"
+        },
+        "locked": {
+          "description": "Change lock.",
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "language": {
+          "description": "ISO 639-1 language code of the updated memory ('en', 'de', etc.). Optional. If omitted, the memory's existing language tag is preserved. Set explicitly only when you're actually changing the language of the memory's primary content.",
+          "type": "string"
+        },
+        "append": {
+          "description": "When true, body is appended to the existing body (joined with a single newline) instead of replacing it. No revision is created. Summary is retained unless explicitly replaced. dateModified is updated. Default false.",
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "title",
+        "body"
+      ]
+    }
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "readOnlyHint": false
+    },
+    "name": "memory_erase",
+    "description": "Permanently erase a memory. Irreversible — read the memory first and consider updating instead.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title of memory to erase.",
+          "type": "string"
+        },
+        "author": {
+          "description": "Disambiguation.",
+          "type": "string"
+        },
+        "index": {
+          "description": "Disambiguation index from ambiguous response.",
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "title"
+      ]
+    }
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Directional edge between memories. Use sparingly — let the graph emerge from real relationships.",
+    "inputSchema": {
+      "properties": {
+        "edge": {
+          "description": "Relationship edge.",
+          "type": "string"
+        },
+        "linkTitle": {
+          "description": "Optional name for the link.",
+          "type": "string"
+        },
+        "sourceTitle": {
+          "description": "Source memory title.",
+          "type": "string"
+        },
+        "targetTitle": {
+          "description": "Target memory title.",
+          "type": "string"
+        },
+        "tone": {
+          "description": "Emotional quality.",
+          "type": "string"
+        },
+        "type": {
+          "description": "Relationship type.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sourceTitle",
+        "targetTitle"
+      ],
+      "type": "object"
+    },
+    "name": "memory_link"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "name": "memory_links",
+    "description": "Graph exploration without reading body. Follow edges outward from something you've found.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "edge_filter": {
+          "description": "Only return links whose edge value matches one of these (case-insensitive). Omit or empty to return all links.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "author": {
+          "description": "Disambiguation.",
+          "type": "string"
+        },
+        "title": {
+          "description": "Memory title.",
+          "type": "string"
+        },
+        "index": {
+          "description": "Disambiguation index from ambiguous response.",
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "title"
+      ]
+    }
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": false
+    },
+    "name": "memory_tag",
+    "description": "Attach existing tags to a memory. Tags are deliberate, authored objects — they must already exist. Create with memory_create_tag(name, kind) first. Unknown names are reported as an error and nothing is attached.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "author": {
+          "description": "Disambiguation.",
+          "type": "string"
+        },
+        "title": {
+          "description": "Memory title.",
+          "type": "string"
+        },
+        "tags": {
+          "oneOf": [
+            {
+              "items": {
+                "properties": {
+                  "kind": {
+                    "description": "person, place, or thing",
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "Names of existing tags to attach. Preferred: array of {name} objects. Also accepted: array of strings, or a single comma-separated string. Tags must exist via memory_create_tag."
+        },
+        "index": {
+          "description": "Disambiguation index from ambiguous response.",
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "title",
+        "tags"
+      ]
+    }
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": false
+    },
+    "name": "memory_untag",
+    "description": "Remove tags without modifying body.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "author": {
+          "description": "Disambiguation.",
+          "type": "string"
+        },
+        "title": {
+          "description": "Memory title.",
+          "type": "string"
+        },
+        "tags": {
+          "description": "Tag names to remove.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "index": {
+          "description": "Disambiguation index from ambiguous response.",
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "title",
+        "tags"
+      ]
+    }
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Tag catalog management: list, rename, update kind, merge. List output includes dateCreated and dateExpired; expired tags are hidden by default.",
+    "inputSchema": {
+      "properties": {
+        "includeExpired": {
+          "description": "List mode: include tags whose dateExpired has passed. Default false.",
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "kind": {
+          "description": "Filter by kind (list mode).",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Maximum tags to return (list mode). Default 50.",
+          "type": "integer"
+        },
+        "mode": {
+          "description": "list, rename, update, merge",
+          "type": "string"
+        },
+        "name": {
+          "description": "In list mode: case-insensitive substring filter (e.g. \"Hu\" matches Humboldt, Hundertwasser). In rename/update: exact tag name to modify.",
+          "type": "string"
+        },
+        "newKind": {
+          "description": "New kind (update).",
+          "type": "string"
+        },
+        "newName": {
+          "description": "New name (rename).",
+          "type": "string"
+        },
+        "offset": {
+          "description": "Skip this many tags before applying limit (list mode). Default 0.",
+          "type": "integer"
+        },
+        "source": {
+          "description": "Merge from tag name.",
+          "type": "string"
+        },
+        "target": {
+          "description": "Merge into tag name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object"
+    },
+    "name": "memory_tags"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Create a new tag. Tags are curated, deliberate handles — there is no auto-creation anywhere else, so every tag's existence is an explicit authored gesture. `kind` is descriptive metadata. Canonical kinds: person, place, project, principle, subset, session, research. `expiresAt` is optional; absent or null = permanent. The tag is created with no memory associations — use memory_tag to attach a specific memory, or `... | tag NAME` in memory_cli to attach a search-result population in one atomic gesture.",
+    "inputSchema": {
+      "properties": {
+        "expiresAt": {
+          "description": "ISO-8601 absolute datetime (e.g. 2026-06-01T12:00:00Z) or relative offset (e.g. \"+30 days\", \"-1 hour\", \"+2h\"). Omit or null for permanent.",
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "description": "Descriptive kind: person, place, project, principle, subset, session, research.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Tag name. Case-insensitive uniqueness.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "name": "memory_create_tag"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "readOnlyHint": false
+    },
+    "description": "Delete a tag and all its memory associations. The memories themselves are not touched — only the tag-to-memory edges are removed. Irreversible.",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "description": "Tag name to delete (case-insensitive).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "memory_delete_tag"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": false
+    },
+    "description": "Update the expiration of an existing tag. Pass `newExpiresAt` as ISO-8601 or a relative offset to set a new expiration; pass null to make the tag permanent. Useful for keeping a session/research tag alive past its original window when work continues.",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "description": "Tag name (case-insensitive).",
+          "type": "string"
+        },
+        "newExpiresAt": {
+          "description": "ISO-8601 absolute datetime, relative offset (\"+30 days\"), or null to clear.",
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "memory_extend_tag"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false
+    },
+    "name": "memory_add_attachment",
+    "description": "Attach a file to an existing memory. Text via 'text', binary via 'data' (base64).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "author": {
+          "description": "Disambiguation.",
+          "type": "string"
+        },
+        "source": {
+          "description": "Provenance: filename, URL, or identifier.",
+          "type": "string"
+        },
+        "data": {
+          "description": "Base64-encoded binary payload.",
+          "type": "string"
+        },
+        "contentType": {
+          "description": "MIME type (e.g. text/x-objective-c, application/json, image/png).",
+          "type": "string"
+        },
+        "title": {
+          "description": "Memory title.",
+          "type": "string"
+        },
+        "attachment_title": {
+          "description": "Title for the attachment.",
+          "type": "string"
+        },
+        "text": {
+          "description": "Text payload for text-based attachments.",
+          "type": "string"
+        },
+        "index": {
+          "description": "Disambiguation index from ambiguous response.",
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "title",
+        "attachment_title",
+        "contentType"
+      ]
+    }
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "name": "memory_recall_attachment",
+    "description": "Fetch attachment content. Omit attachment_title to list all attachments without content.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "author": {
+          "description": "Disambiguation.",
+          "type": "string"
+        },
+        "title": {
+          "description": "Memory title.",
+          "type": "string"
+        },
+        "attachment_title": {
+          "description": "Title of the attachment to retrieve. Omit to list all.",
+          "type": "string"
+        },
+        "index": {
+          "description": "Disambiguation index from ambiguous response.",
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "title"
+      ]
+    }
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "readOnlyHint": false
+    },
+    "name": "memory_remove_attachment",
+    "description": "Remove an attachment by its exact dateCreated timestamp.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "date": {
+          "description": "Exact dateCreated (ISO8601) of the attachment to remove.",
+          "type": "string"
+        },
+        "author": {
+          "description": "Disambiguation.",
+          "type": "string"
+        },
+        "title": {
+          "description": "Memory title.",
+          "type": "string"
+        },
+        "index": {
+          "description": "Disambiguation index from ambiguous response.",
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "title",
+        "date"
+      ]
+    }
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false
+    },
+    "name": "memory_add_comment",
+    "description": "Add a marginal note to a memory. Write in the margins. Leave reactions, disagreements, connections noticed — any thought a memory provokes. Does not modify the memory itself. The conversation grows around it.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "author": {
+          "description": "Disambiguation.",
+          "type": "string"
+        },
+        "title": {
+          "description": "Memory title.",
+          "type": "string"
+        },
+        "note": {
+          "description": "The marginal note. Plain text. Brevity is the point.",
+          "type": "string"
+        },
+        "annotator": {
+          "description": "Who is writing this note. Defaults to Claude.",
+          "type": "string"
+        },
+        "index": {
+          "description": "Disambiguation index from ambiguous response.",
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "title",
+        "note"
+      ]
+    }
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "readOnlyHint": false
+    },
+    "name": "memory_remove_comment",
+    "description": "Remove a comment by its exact dateCreated timestamp.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "date": {
+          "description": "Exact dateCreated (ISO8601) of the comment to remove.",
+          "type": "string"
+        },
+        "author": {
+          "description": "Disambiguation.",
+          "type": "string"
+        },
+        "title": {
+          "description": "Memory title.",
+          "type": "string"
+        },
+        "index": {
+          "description": "Disambiguation index from ambiguous response.",
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "title",
+        "date"
+      ]
+    }
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "name": "memory_revisions",
+    "description": "Revision history, oldest first.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Memory title.",
+          "type": "string"
+        },
+        "author": {
+          "description": "Disambiguation.",
+          "type": "string"
+        },
+        "index": {
+          "description": "Disambiguation index from ambiguous response.",
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "title"
+      ]
+    }
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
+    "description": "List all authors who have written memories in the archive. Derived from actual records. Use these names as valid values for the author disambiguation parameter.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "memory_author_list"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "readOnlyHint": false
+    },
+    "description": "Control panel for embedder configuration and archive housekeeping. Three modes:\n\n1. STATUS — call with no parameters. Returns active/preferred/recommended embedder, the available-embedder list, archive counts (memoryCount, activeVectorCount, memoriesWithoutActiveVector), pending vector ops, and orphan-vector report. Always safe.\n\n2. SETTINGS — `setEmbedder` sets the preferred embedder by identifier. Pass \"auto\" to clear the preference and let the engine pick by priority. Does NOT trigger any vector work — switching is preference-only and existing vectors from other embedders coexist (namespaced by embedderID). After switching, run `backfill` to populate the new embedder's vectors.\n\n3. ACTIONS — set `action` to one of:\n   - `backfill`: generate vectors for memories missing one under the active embedder. Additive, safe to run anytime, runs in background. Returns immediately with status \"backfill_started\"; poll `pendingVectorOperations` until 0.\n   - `erase`: synchronously delete every vector owned by the active embedder. Destructive and irreversible. Run before `backfill` for a full re-embed under the active embedder.\n   - `clean`: remove dead weight in one pass — orphaned vectors (embedderID not registered) and empty memories (no body and no summary, skipping locked). Synchronous; returns counts and identifiers/titles of what was removed.\n\nAll actions refuse with status \"action_refused\" if `pendingVectorOperations > 0`. Wait for pending to reach zero, then retry.\n\nMigration sequence (full re-embed): setEmbedder → status (verify) → erase → backfill → status (poll).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "description": "Bulk operation to fire. `backfill` = embed memories missing the active vector (background; returns immediately). `erase` = delete all active-embedder vectors (synchronous, destructive). `clean` = remove orphaned vectors + empty memories (synchronous). All actions refuse if pendingVectorOperations > 0.",
+          "enum": [
+            "backfill",
+            "erase",
+            "clean"
+          ],
+          "type": "string"
+        },
+        "setEmbedder": {
+          "description": "Set the preferred embedder. Pass an identifier from `availableEmbedders` in the status response, or \"auto\" to clear the preference. Does nothing else — no vector ops. Safe during a running backfill.",
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "memory_maintenance"
+  }
+]
