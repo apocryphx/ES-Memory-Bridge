@@ -2,17 +2,28 @@
 //  SchemaCache.h
 //  ES-Memory-Bridge
 //
-//  Cached JSON schema served on tools/list. Replaces the prior compile-time
-//  StaticToolsList — the source of truth is now the ES Memory server's own
-//  tools/list response, fetched once at launch and persisted to
-//  ~/Library/Caches/com.elarity.es-memory-mcp/tools.json.
+//  Live proxy for the server's tools/list, with last-known-good disk
+//  fallback for when the server isn't running.
 //
-//  Cold-start fallback: the .app bundle ships Resources/tools-bootstrap.json
-//  derived from the last-known server schema. Without it, a first-run with
-//  no server would surface an empty tools list.
+//  Every call:
+//    1. Forward tools/list to the server synchronously.
+//    2a. On success: write the response to disk (overwrite), merge
+//        memory_cli at index 0, return.
+//    2b. On failure: read the on-disk last-known-good (written by some
+//        prior successful fetch), merge memory_cli, return.
+//    2c. No disk file either: return [memory_cli] only.
 //
-//  memory_cli is bridge-local — the server doesn't know about it. It's
-//  merged into currentTools in memory only, never persisted to disk.
+//  This replaces the previous design which also shipped a static
+//  Resources/tools-bootstrap.json — that bootstrap could shadow a
+//  running server with stale schemas whenever the disk cache was
+//  empty, and required hand-edits in lockstep with the server. The
+//  disk file is purely the bridge writing what it last saw; it's
+//  always consistent with the most recent running server, so it can
+//  never be more stale than "last time the server was up".
+//
+//  No TTL — the cache is overwritten on every successful fetch.
+//
+//  memory_cli is bridge-local; the server doesn't know about it.
 //
 
 #import <Foundation/Foundation.h>
@@ -23,27 +34,13 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (instancetype)shared;
 
-/// Synchronous load. Reads the on-disk cache if present, falls back to the
-/// bootstrap JSON in the app bundle, then to `inMemoryFallback` (CLT-only
-/// transitional path — pass StaticToolsList() until the bundle has
-/// Resources/tools-bootstrap.json). Always populates currentTools before
-/// returning. Schedules an async refresh from the server. Must be invoked
-/// before MCPServer starts handling tools/list.
-- (void)loadOnStartupWithFallback:(nullable NSArray<NSDictionary *> *)inMemoryFallback;
-
-/// The array currently served for tools/list. Includes memory_cli at index 0.
-/// Thread-safe; returns a snapshot pointer that won't be torn by a concurrent
-/// refresh.
+/// Synchronous fetch. Blocks for one server round-trip (typical <50ms;
+/// Forwarder timeout 120s). Returns:
+///   - live server response (and persists it to disk) when reachable
+///   - last-known-good from disk when the server is down
+///   - [memory_cli] only when neither is available
+/// Never nil. memory_cli is always at index 0.
 - (NSArray<NSDictionary *> *)currentTools;
-
-/// Cache age vs. TTL (default 24h, override via NSUserDefaults key
-/// `ESMBSchemaCacheTTL` as seconds). Returns YES on first run.
-- (BOOL)isStale;
-
-/// Fetch tools/list from the server in the background. Rewrites disk cache
-/// and atomically swaps currentTools on success. Coalesces concurrent calls.
-/// On failure, keeps the previous snapshot and logs to stderr.
-- (void)refreshAsync;
 
 @end
 

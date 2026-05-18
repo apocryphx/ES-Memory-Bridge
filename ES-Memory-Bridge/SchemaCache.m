@@ -6,22 +6,11 @@
 #import "SchemaCache.h"
 #import "Forwarder.h"
 #import "MCPFraming.h"
-#import <os/lock.h>
 
 static NSString *const kBundleIdentifier = @"com.elarity.es-memory-mcp";
 static NSString *const kCacheFileName    = @"tools.json";
-static NSString *const kBootstrapResource = @"tools-bootstrap";
-static NSString *const kTTLDefaultsKey   = @"ESMBSchemaCacheTTL";
-static const NSTimeInterval kDefaultTTL  = 24 * 60 * 60; // 24 hours
 
 @implementation SchemaCache {
-    NSArray<NSDictionary *> *_currentTools;
-    os_unfair_lock _toolsLock;
-
-    dispatch_queue_t _refreshQueue;
-    BOOL _refreshInFlight;
-    os_unfair_lock _refreshLock;
-
     NSDictionary *_memoryCLISchema;
 }
 
@@ -37,9 +26,6 @@ static const NSTimeInterval kDefaultTTL  = 24 * 60 * 60; // 24 hours
 - (instancetype)init {
     self = [super init];
     if (!self) return nil;
-    _toolsLock = OS_UNFAIR_LOCK_INIT;
-    _refreshLock = OS_UNFAIR_LOCK_INIT;
-    _refreshQueue = dispatch_queue_create("com.elarity.esmb.schema.refresh", DISPATCH_QUEUE_SERIAL);
     _memoryCLISchema = [self.class memoryCLISchema];
     return self;
 }
@@ -83,8 +69,8 @@ static const NSTimeInterval kDefaultTTL  = 24 * 60 * 60; // 24 hours
     return schema;
 }
 
-- (NSArray<NSDictionary *> *)_mergeMemoryCLIInto:(NSArray<NSDictionary *> *)serverTools {
-    if (!serverTools) return @[ _memoryCLISchema ];
+- (NSArray<NSDictionary *> *)_mergeMemoryCLIInto:(nullable NSArray<NSDictionary *> *)serverTools {
+    if (!serverTools.count) return @[ _memoryCLISchema ];
     NSMutableArray *merged = [NSMutableArray arrayWithCapacity:serverTools.count + 1];
     [merged addObject:_memoryCLISchema];
     for (NSDictionary *t in serverTools) {
@@ -96,7 +82,7 @@ static const NSTimeInterval kDefaultTTL  = 24 * 60 * 60; // 24 hours
     return [merged copy];
 }
 
-#pragma mark - Disk paths
+#pragma mark - Disk last-known-good
 
 - (NSString *)_cacheDirectory {
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES);
@@ -115,143 +101,90 @@ static const NSTimeInterval kDefaultTTL  = 24 * 60 * 60; // 24 hours
     return [arr isKindOfClass:NSArray.class] ? arr : nil;
 }
 
-- (BOOL)_writeDiskCache:(NSArray *)tools {
+- (void)_writeDiskCache:(NSArray *)tools {
     NSError *err = nil;
     NSData *data = [NSJSONSerialization dataWithJSONObject:tools
                                                    options:NSJSONWritingPrettyPrinted
                                                      error:&err];
     if (!data) {
-        fprintf(stderr, "[es-bridge] schema cache encode failed: %s\n",
+        fprintf(stderr, "[es-bridge] last-known-good encode failed: %s\n",
                 err.localizedDescription.UTF8String);
-        return NO;
+        return;
     }
     NSString *dir = [self _cacheDirectory];
     [[NSFileManager defaultManager] createDirectoryAtPath:dir
                               withIntermediateDirectories:YES attributes:nil error:nil];
     NSString *tmp = [[self _cacheFilePath] stringByAppendingString:@".tmp"];
     if (![data writeToFile:tmp atomically:NO]) {
-        fprintf(stderr, "[es-bridge] schema cache tmp write failed at %s\n",
+        fprintf(stderr, "[es-bridge] last-known-good tmp write failed at %s\n",
                 tmp.UTF8String);
-        return NO;
+        return;
     }
     if (rename(tmp.UTF8String, [self _cacheFilePath].UTF8String) != 0) {
-        fprintf(stderr, "[es-bridge] schema cache rename failed: %s\n", strerror(errno));
-        return NO;
+        fprintf(stderr, "[es-bridge] last-known-good rename failed: %s\n", strerror(errno));
     }
-    return YES;
-}
-
-- (nullable NSArray *)_readBootstrap {
-    NSString *path = [[NSBundle mainBundle] pathForResource:kBootstrapResource ofType:@"json"];
-    if (!path) return nil;
-    NSData *data = [NSData dataWithContentsOfFile:path];
-    if (!data) return nil;
-    NSArray *arr = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-    return [arr isKindOfClass:NSArray.class] ? arr : nil;
 }
 
 #pragma mark - Public API
 
-- (void)loadOnStartupWithFallback:(NSArray<NSDictionary *> *)inMemoryFallback {
-    NSArray *loaded = [self _readDiskCache];
-    NSString *source = @"disk cache";
-    if (!loaded) {
-        loaded = [self _readBootstrap];
-        if (loaded) source = @"bundle bootstrap";
-    }
-    if (!loaded && inMemoryFallback) {
-        loaded = inMemoryFallback;
-        source = @"in-memory fallback";
-    }
-    if (!loaded) {
-        loaded = @[]; // memory_cli will still be merged below
-        source = @"empty (no cache, no bootstrap, no fallback)";
-    }
-
-    NSArray *merged = [self _mergeMemoryCLIInto:loaded];
-    os_unfair_lock_lock(&_toolsLock);
-    _currentTools = merged;
-    os_unfair_lock_unlock(&_toolsLock);
-
-    fprintf(stderr, "[es-bridge] schema cache loaded from %s (%lu tools)\n",
-            source.UTF8String, (unsigned long)merged.count);
-
-    if ([self isStale]) {
-        [self refreshAsync];
-    }
-}
-
 - (NSArray<NSDictionary *> *)currentTools {
-    os_unfair_lock_lock(&_toolsLock);
-    NSArray *snapshot = _currentTools ?: @[];
-    os_unfair_lock_unlock(&_toolsLock);
-    return snapshot;
-}
+    // Fast path: if Forwarder already knows the host is unreachable
+    // from a recent failed forward, skip the redundant 120s timeout
+    // and go straight to the last-known-good disk file. Forwarder
+    // flips reachability back to YES the moment any forward succeeds
+    // (e.g. a subsequent tool call once the user starts the server),
+    // so the next currentTools call will live-fetch again.
+    if (![[Forwarder shared] hostReachable]) {
+        return [self _serveLastKnownGoodOrCLIOnly];
+    }
 
-- (BOOL)isStale {
-    NSDictionary *attrs = [[NSFileManager defaultManager]
-        attributesOfItemAtPath:[self _cacheFilePath] error:nil];
-    NSDate *mtime = attrs.fileModificationDate;
-    if (!mtime) return YES; // no cache file → stale
+    // Per-call id counter — purely for log readability. Concurrent
+    // tools/list is rare and a collision here is harmless.
+    static NSInteger toolsListId = 80000;
+    toolsListId++;
 
-    NSTimeInterval ttl = kDefaultTTL;
-    NSNumber *override = [[NSUserDefaults standardUserDefaults] objectForKey:kTTLDefaultsKey];
-    if ([override isKindOfClass:NSNumber.class]) ttl = override.doubleValue;
-
-    return [[NSDate date] timeIntervalSinceDate:mtime] > ttl;
-}
-
-- (void)refreshAsync {
-    os_unfair_lock_lock(&_refreshLock);
-    BOOL alreadyInFlight = _refreshInFlight;
-    _refreshInFlight = YES;
-    os_unfair_lock_unlock(&_refreshLock);
-    if (alreadyInFlight) return;
-
-    dispatch_async(_refreshQueue, ^{
-        static NSInteger refreshId = 90000;
-        refreshId++;
-        NSString *line = ESMBEncodeJSON(@{
-            @"jsonrpc": @"2.0",
-            @"id": @(refreshId),
-            @"method": @"tools/list",
-            @"params": @{}
-        });
-
-        NSError *err = nil;
-        NSString *response = [[Forwarder shared] forwardLine:line error:&err];
-        BOOL success = NO;
-        if (response) {
-            NSData *data = [response dataUsingEncoding:NSUTF8StringEncoding];
-            NSDictionary *parsed = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-            NSArray *tools = nil;
-            if ([parsed isKindOfClass:NSDictionary.class]) {
-                id result = parsed[@"result"];
-                if ([result isKindOfClass:NSDictionary.class]) {
-                    id t = ((NSDictionary *)result)[@"tools"];
-                    if ([t isKindOfClass:NSArray.class]) tools = t;
-                }
-            }
-            if (tools) {
-                [self _writeDiskCache:tools];
-                NSArray *merged = [self _mergeMemoryCLIInto:tools];
-                os_unfair_lock_lock(&_toolsLock);
-                _currentTools = merged;
-                os_unfair_lock_unlock(&_toolsLock);
-                fprintf(stderr, "[es-bridge] schema cache refreshed (%lu tools from server)\n",
-                        (unsigned long)merged.count);
-                success = YES;
-            }
-        }
-        if (!success) {
-            fprintf(stderr, "[es-bridge] schema refresh failed: %s — keeping previous snapshot\n",
-                    err.localizedDescription.UTF8String ?: "no response from host");
-        }
-
-        os_unfair_lock_lock(&_refreshLock);
-        _refreshInFlight = NO;
-        os_unfair_lock_unlock(&_refreshLock);
+    NSString *line = ESMBEncodeJSON(@{
+        @"jsonrpc": @"2.0",
+        @"id": @(toolsListId),
+        @"method": @"tools/list",
+        @"params": @{}
     });
+
+    NSError *err = nil;
+    NSString *response = [[Forwarder shared] forwardLine:line error:&err];
+
+    NSArray *tools = nil;
+    if (response) {
+        NSData *data = [response dataUsingEncoding:NSUTF8StringEncoding];
+        NSDictionary *parsed = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+        if ([parsed isKindOfClass:NSDictionary.class]) {
+            id result = parsed[@"result"];
+            if ([result isKindOfClass:NSDictionary.class]) {
+                id t = ((NSDictionary *)result)[@"tools"];
+                if ([t isKindOfClass:NSArray.class]) tools = t;
+            }
+        }
+    }
+
+    if (tools) {
+        // Live success — persist as last-known-good, then return merged.
+        [self _writeDiskCache:tools];
+        return [self _mergeMemoryCLIInto:tools];
+    }
+
+    // Live failed — Forwarder has flipped hostReachable to NO and logged
+    // the transition. Serve last-known-good so Claude has a tool list
+    // while the user starts the server; the next tool call will surface
+    // the offline error via DegradedResponses.
+    return [self _serveLastKnownGoodOrCLIOnly];
+}
+
+- (NSArray<NSDictionary *> *)_serveLastKnownGoodOrCLIOnly {
+    NSArray *fallback = [self _readDiskCache];
+    if (fallback.count) {
+        return [self _mergeMemoryCLIInto:fallback];
+    }
+    return @[ _memoryCLISchema ];
 }
 
 @end

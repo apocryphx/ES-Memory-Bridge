@@ -4,7 +4,6 @@
 //
 
 #import "AppDelegate.h"
-#import "SchemaCache.h"
 #import "Forwarder.h"
 #import "MCPServer.h"
 
@@ -17,10 +16,8 @@
     // the first inbound line — keeps the log ordering stable.
     (void)[Forwarder shared];
 
-    // Load schema synchronously so the very first tools/list won't race the
-    // cache load. nil fallback — the .app bundle ships
-    // Resources/tools-bootstrap.json as the cold-start fallback.
-    [[SchemaCache shared] loadOnStartupWithFallback:nil];
+    // Note: SchemaCache no longer needs startup priming. Every tools/list
+    // call now fetches live from the server via SchemaCache.currentTools.
 
     [[MCPServer shared] start];
 }

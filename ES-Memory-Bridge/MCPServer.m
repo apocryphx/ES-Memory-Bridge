@@ -141,8 +141,7 @@
             // before forwarding. If normalization fails, error locally
             // instead of forwarding garbage.
             NSArray<NSString *> *dateKeys = nil;
-            if ([toolName isEqualToString:@"memory_create_tag"])      dateKeys = @[ @"expiresAt" ];
-            else if ([toolName isEqualToString:@"memory_extend_tag"]) dateKeys = @[ @"newExpiresAt" ];
+            if ([toolName isEqualToString:@"memory_tags"])            dateKeys = @[ @"expiresAt", @"newExpiresAt" ];
             else if ([toolName isEqualToString:@"memory_store"])      dateKeys = @[ @"dateCreated" ];
             else if ([toolName isEqualToString:@"memory_update"])     dateKeys = @[ @"dateCreated" ];
 
